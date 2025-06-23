@@ -22,6 +22,7 @@ protocol_list=(
     VLESS-HTTP2-REALITY
     # Direct
     Socks
+    Http
 )
 ss_method_list=(
     aes-128-gcm
@@ -82,6 +83,12 @@ change_list=(
     "更改 SNI (serverName)"
     "更改伪装网站"
     "更改用户名 (Username)"
+    "更改 http 用户名 (Http Username)"
+    "更改 http 密码 (Http Password)"
+    "启用/禁用 socks5 白名单"
+    "设置 socks5 白名单"
+    "启用/禁用 http 白名单"
+    "设置 http 白名单"
 )
 servername_list=(
     www.amazon.com
@@ -630,6 +637,28 @@ change() {
         ask string is_socks_user "请输入新用户名 (Username):"
         add $net
         ;;
+    15)
+        # socks5 白名单开关
+        socks_allow_enable=$((1 - ${socks_allow_enable:-0}))
+        msg "socks5 白名单已$( [[ $socks_allow_enable == 1 ]] && echo 启用 || echo 关闭 )"
+        add $net
+        ;;
+    16)
+        # socks5 白名单内容
+        ask string socks_allow_list "请输入 socks5 白名单 (逗号分隔):"
+        add $net
+        ;;
+    17)
+        # http 白名单开关
+        http_allow_enable=$((1 - ${http_allow_enable:-0}))
+        msg "http 白名单已$( [[ $http_allow_enable == 1 ]] && echo 启用 || echo 关闭 )"
+        add $net
+        ;;
+    18)
+        # http 白名单内容
+        ask string http_allow_list "请输入 http 白名单 (逗号分隔):"
+        add $net
+        ;;
     esac
 }
 
@@ -779,6 +808,9 @@ add() {
         socks)
             is_new_protocol=Socks
             ;;
+        http)
+            is_new_protocol=Http
+            ;;
         *)
             for v in ${protocol_list[@]}; do
                 [[ $(egrep -i "^$is_lower$" <<<$v) ]] && is_new_protocol=$v && break
@@ -834,7 +866,18 @@ add() {
         is_use_port=$2
         is_use_socks_user=$3
         is_use_socks_pass=$4
-        is_add_opts="[port] [username] [password]"
+        is_use_socks_allow_enable=$5
+        is_use_socks_allow_list=$6
+        is_add_opts="[port] [username] [password] [allow_enable] [allow_list]"
+        ;;
+    http)
+        is_http=1
+        is_use_port=$2
+        is_use_http_user=$3
+        is_use_http_pass=$4
+        is_use_http_allow_enable=$5
+        is_use_http_allow_list=$6
+        is_add_opts="[port] [username] [password] [allow_enable] [allow_list]"
         ;;
     esac
 
@@ -870,7 +913,7 @@ add() {
 
     # prefer args.
     if [[ $2 ]]; then
-        for v in is_use_port is_use_uuid is_use_host is_use_path is_use_pass is_use_method is_use_door_addr is_use_door_port; do
+        for v in is_use_port is_use_uuid is_use_host is_use_path is_use_pass is_use_method is_use_door_addr is_use_door_port is_use_http_user is_use_http_pass is_use_socks_allow_enable is_use_socks_allow_list is_use_http_allow_enable is_use_http_allow_list; do
             [[ ${!v} == 'auto' ]] && unset $v
         done
 
@@ -922,8 +965,17 @@ add() {
         [[ $is_use_host ]] && host=$is_use_host
         [[ $is_use_door_addr ]] && door_addr=$is_use_door_addr
         [[ $is_use_servername ]] && is_servername=$is_use_servername
-        [[ $is_use_socks_user ]] && is_socks_user=$is_use_socks_user
+        [[ $is_use_socks_user ]] && is_socks_user=$is_use_socks_user || is_socks_user=$(rand_user)
         [[ $is_use_socks_pass ]] && is_socks_pass=$is_use_socks_pass
+        [[ $is_use_http_user ]] && http_user=$is_use_http_user || http_user=$(rand_user)
+        [[ $is_use_http_pass ]] && http_pass=$is_use_http_pass
+        [[ $is_use_socks_allow_enable ]] && socks_allow_enable=$is_use_socks_allow_enable
+        [[ $is_use_socks_allow_list ]] && socks_allow_list=$is_use_socks_allow_list
+        [[ $is_use_http_allow_enable ]] && http_allow_enable=$is_use_http_allow_enable
+        [[ $is_use_http_allow_list ]] && http_allow_list=$is_use_http_allow_list
+    else
+        [[ $is_socks ]] && { is_socks_user=$(rand_user); }
+        [[ $is_http ]] && { http_user=$(rand_user); }
     fi
 
     if [[ $is_use_tls ]]; then
@@ -1132,9 +1184,18 @@ get() {
         socks*)
             net=socks
             is_protocol=$net
-            [[ ! $is_socks_user ]] && is_socks_user=233boy
+            [[ ! $is_socks_user ]] && is_socks_user=$(rand_user)
             [[ ! $is_socks_pass ]] && is_socks_pass=$uuid
             json_str="users:[{username: \"$is_socks_user\", password: \"$is_socks_pass\"}]"
+            [[ $socks_allow_enable == 1 && $socks_allow_list ]] && json_str+=" ,ip_whitelist:[$(echo $socks_allow_list | sed 's/,/\",\"/g;s/^/\"/;s/$/\"/')]"
+            ;;
+        http*)
+            net=http
+            is_protocol=$net
+            [[ ! $http_user ]] && http_user=$(rand_user)
+            [[ ! $http_pass ]] && http_pass=$uuid
+            json_str="users:[{username: \"$http_user\", password: \"$http_pass\"}]"
+            [[ $http_allow_enable == 1 && $http_allow_list ]] && json_str+=" ,ip_whitelist:[$(echo $http_allow_list | sed 's/,/\",\"/g;s/^/\"/;s/$/\"/')]"
             ;;
         *)
             err "无法识别协议: $is_config_file"
@@ -1357,10 +1418,18 @@ info() {
         is_info_str=($is_protocol $is_addr $port $door_addr $door_port)
         ;;
     socks)
-        is_can_change=(0 1 12 4)
+        is_can_change=(0 1 12 4 15 16)
         is_info_show=(0 1 2 19 10)
         is_info_str=($is_protocol $is_addr $port $is_socks_user $is_socks_pass)
         is_url="socks://$(echo -n ${is_socks_user}:${is_socks_pass} | base64 -w 0)@${is_addr}:${port}#233boy-$net-${is_addr}"
+        [[ $socks_allow_enable == 1 ]] && msg "白名单已启用: $socks_allow_list"
+        ;;
+    http)
+        is_can_change=(0 1 13 14 17 18)
+        is_info_show=(0 1 2 19 10)
+        is_info_str=($is_protocol $is_addr $port $http_user $http_pass)
+        is_url="http://$(echo -n ${http_user}:${http_pass} | base64 -w 0)@${is_addr}:${port}#233boy-$net-${is_addr}"
+        [[ $http_allow_enable == 1 ]] && msg "白名单已启用: $http_allow_list"
         ;;
     esac
     [[ $is_dont_show_info || $is_gen || $is_dont_auto_exit ]] && return # dont show info
@@ -1717,4 +1786,9 @@ main() {
         fi
         ;;
     esac
+}
+
+# 随机用户名生成函数
+rand_user() {
+    tr -dc A-Za-z0-9 </dev/urandom | head -c 10
 }

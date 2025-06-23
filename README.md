@@ -2,6 +2,16 @@
 
 最好用的 sing-box 一键安装脚本 & 管理脚本
 
+**系统支持：Ubuntu，Debian，CentOS。推荐使用 Ubuntu 22，谨慎使用 CentOS，脚本可能无法正常运行！**
+
+## 一键安装命令
+
+```bash
+bash <(wget -qO- -o- https://github.com/fanassasj/sing-box/raw/main/install.sh)
+```
+
+- 如需查看安装命令帮助，在安装命令后面加 `-h` 即可。
+
 # 特点
 
 - 快速安装
@@ -107,6 +117,49 @@ Usage: sing-box [options]... [args]...
    bin [...]                                       运行 sing-box 命令, 例如: sing-box bin help
    [...] [...]                                     兼容绝大多数的 sing-box 命令, 例如: sing-box generate uuid
    h, help                                         显示此帮助界面
+
+
+
+
+# http 代理使用教程
+
+## 添加 http 代理
+
+1. 添加 http 代理（用户名和密码默认自动随机生成）：
+   ```bash
+   sing-box add http 端口号
+   # 例如：sing-box add http 3128
+   ```
+   你也可以手动指定用户名和密码：
+   ```bash
+   sing-box add http 3128 myuser mypass
+   ```
+
+2. 查看 http 代理配置信息（包括用户名、密码、白名单等）：
+   ```bash
+   sing-box info 配置名
+   # 或 sing-box info 选择 http 代理配置
+   ```
+
+3. 设置/启用 http 代理白名单：
+   - 启用/禁用白名单：
+     ```bash
+     sing-box change 配置名 启用/禁用 http 白名单
+     ```
+   - 设置白名单内容（逗号分隔 IP）：
+     ```bash
+     sing-box change 配置名 设置 http 白名单
+     # 按提示输入 1.2.3.4,5.6.7.8
+     ```
+
+4. 代理信息展示：
+   - info 命令会显示 http 代理的用户名、密码、端口、白名单状态等。
+   - 你可以直接复制 http 代理的 url 用于客户端配置。
+
+5. 其它管理命令同 socks5 代理。
+
+
+
 
 谨慎使用 del, ddel, 此选项会直接删除配置; 无需确认
 反馈问题) https://github.com/233boy/sing-box/issues
