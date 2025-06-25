@@ -23,7 +23,6 @@ protocol_list=(
     # Direct
     Socks
     Http
-    MTProto
 )
 ss_method_list=(
     aes-128-gcm
@@ -69,7 +68,6 @@ info_list=(
     "用户名 (Username)"
     "跳过证书验证 (allowInsecure)"
     "拥塞控制算法 (congestion_control)"
-    "MTP Secret"
 )
 change_list=(
     "更改协议"
@@ -91,9 +89,6 @@ change_list=(
     "设置 socks5 白名单"
     "启用/禁用 http 白名单"
     "设置 http 白名单"
-    "更改 MTP Secret"
-    "启用/禁用 MTP 白名单"
-    "设置 MTP 白名单"
 )
 servername_list=(
     www.amazon.com
@@ -212,23 +207,20 @@ is_port_used() {
 
 # ask input a string or pick a option for list.
 ask() {
-    local is_tmp_list is_default_arg is_opt_msg is_opt_input_msg is_ask_set is_ask_result is_emtpy_exit
-    local REPLY 
-    case "$1" in
+    case $1 in
     set_ss_method)
-        is_tmp_list=("${ss_method_list[@]}")
-        is_default_arg="$is_random_ss_method"
+        is_tmp_list=(${ss_method_list[@]})
+        is_default_arg=$is_random_ss_method
         is_opt_msg="\n请选择加密方式:\n"
         is_opt_input_msg="(默认\e[92m $is_default_arg\e[0m):"
         is_ask_set=ss_method
         ;;
     set_protocol)
-        is_tmp_list=("${protocol_list[@]}")
-        [[ "$is_no_auto_tls" ]] && {
+        is_tmp_list=(${protocol_list[@]})
+        [[ $is_no_auto_tls ]] && {
             unset is_tmp_list
-            local v_proto 
-            for v_proto in "${protocol_list[@]}"; do
-                [[ $(grep -i "tls$" <<<"$v_proto") ]] && is_tmp_list=("${is_tmp_list[@]}" "$v_proto")
+            for v in ${protocol_list[@]}; do
+                [[ $(grep -i tls$ <<<$v) ]] && is_tmp_list=(${is_tmp_list[@]} $v)
             done
         }
         is_opt_msg="\n请选择协议:\n"
@@ -236,27 +228,22 @@ ask() {
         ;;
     set_change_list)
         is_tmp_list=()
-        local v_change_idx 
-        for v_change_idx in ${is_can_change[@]}; do 
-            is_tmp_list+=("${change_list[$v_change_idx]}")
+        for v in ${is_can_change[@]}; do
+            is_tmp_list+=("${change_list[$v]}")
         done
         is_opt_msg="\n请选择更改:\n"
         is_ask_set=is_change_str
-        is_opt_input_msg="$3"
+        is_opt_input_msg=$3
         ;;
     string)
-        is_ask_set="$2"
-        is_opt_input_msg="$3"
+        is_ask_set=$2
+        is_opt_input_msg=$3
         ;;
     list)
-        is_ask_set="$2"
-        if ! declare -p "$3" &>/dev/null || [[ "$(declare -p "$3")" != "declare -a "* ]]; then 
-             is_tmp_list=($3) 
-        else 
-             is_tmp_list=($3) # Assuming $3 is already expanded array if it was an array name, or simple string.
-        fi
-        is_opt_msg="$4"
-        is_opt_input_msg="$5"
+        is_ask_set=$2
+        [[ ! $is_tmp_list ]] && is_tmp_list=($3)
+        is_opt_msg=$4
+        is_opt_input_msg=$5
         ;;
     get_config_file)
         is_tmp_list=("${is_all_json[@]}")
@@ -269,56 +256,68 @@ ask() {
         is_emtpy_exit=1
         ;;
     esac
-    msg "$is_opt_msg"
-    [[ ! "$is_opt_input_msg" ]] && is_opt_input_msg="请选择 [\e[91m1-${#is_tmp_list[@]}\e[0m]:"
-    [[ "${is_tmp_list[*]}" ]] && show_list "${is_tmp_list[@]}" 
-    
+    msg $is_opt_msg
+    [[ ! $is_opt_input_msg ]] && is_opt_input_msg="请选择 [\e[91m1-${#is_tmp_list[@]}\e[0m]:"
+    [[ $is_tmp_list ]] && show_list "${is_tmp_list[@]}"
     while :; do
-        echo -ne "$is_opt_input_msg"
+        echo -ne $is_opt_input_msg
         read REPLY
-
-        if [[ ! "$REPLY" ]]; then # User pressed Enter (empty input)
-            if [[ "$is_emtpy_exit" == 1 ]]; then exit; fi # Main menu specific exit on empty
-            
-            if [[ -n "$is_default_arg" ]]; then # If there is a default argument, use it
-                export $is_ask_set="$is_default_arg"
-                msg "使用默认: ${!is_ask_set}" # Inform user default is used
-                break
-            elif [[ "$1" == "string" ]]; then # If it was an `ask string` call AND no default_arg was in play
-                export $is_ask_set="" # Set the target variable to empty string and return
-                # Caller function (e.g., _handle_params_xxx) is now responsible for handling this empty value
-                break
-            fi
-            # If not 'string' type (so it's a list selection), not main menu exit, and no default_arg, empty input is an error here.
-            msg "输入${is_err}" 
-            continue
-        fi
+        [[ ! $REPLY && $is_emtpy_exit ]] && exit
+        [[ ! $REPLY && $is_default_arg ]] && export $is_ask_set=$is_default_arg && break
         
-        # Non-empty REPLY processing (this part remains largely the same)
-        if [[ "$REPLY" == "${is_str}2${is_get}3${is_opt}3" && "$is_ask_set" == 'is_main_pick' ]]; then msg "\n${is_get}2${is_str}3${is_msg}3b${is_tmp}o${is_opt}y\n" && exit; fi
+        [[ "$REPLY" == "${is_str}2${is_get}3${is_opt}3" && $is_ask_set == 'is_main_pick' ]] && {
+            msg "\n${is_get}2${is_str}3${is_msg}3b${is_tmp}o${is_opt}y\n" && exit
+        }
 
-        if [[ -z "${is_tmp_list[*]}" ]]; then # String input mode (but REPLY is not empty here due to outer if)
-            # Specific validations for non-list inputs (port, uuid, path, 'y') that require non-empty REPLY
-            if [[ "$is_ask_set" == "port" || "$is_ask_set" == "door_port" ]]; then # Check if asking for a port
-                if [[ ! $(is_test port "$REPLY") ]]; then msg "$is_err 请输入正确的端口, 可选(1-65535)"; continue; fi
-                if [[ $(is_test port_used "$REPLY") && "$is_ask_set" != 'door_port' ]]; then msg "$is_err 无法使用 ($REPLY) 端口."; continue; fi
-            elif [[ "$is_ask_set" == *"uuid"* && ! $(is_test uuid "$REPLY") ]]; then [[ ! "$tmp_uuid" ]] && get_uuid; msg "$is_err 请输入正确的 UUID, 例如: $tmp_uuid"; continue;
-            elif [[ "$is_ask_set" == *"path"* && ! $(is_test path "$REPLY") ]]; then [[ ! "$tmp_uuid" ]] && get_uuid; msg "$is_err 请输入正确的路径, 例如: /$tmp_uuid"; continue;
-            elif [[ "$is_ask_set" == "y" ]]; then if [[ $(grep -i ^y$ <<<"$REPLY") ]]; then break; else msg "请输入 (y)"; continue; fi;
+        if [[ ! $is_tmp_list ]]; then # Handling for direct string/value input (not list selection)
+            # If REPLY is empty here, it means it's an optional string input 
+            # not handled by is_default_arg or is_emtpy_exit. Treat as valid empty input.
+            if [[ -z "$REPLY" ]]; then 
+                export $is_ask_set="" 
+                break               
             fi
+
+            # Existing validations for specific non-empty input types
+            [[ $(grep port <<<$is_ask_set) ]] && {
+                [[ ! $(is_test port "$REPLY") ]] && {
+                    msg "$is_err 请输入正确的端口, 可选(1-65535)"
+                    continue
+                }
+                if [[ $(is_test port_used $REPLY) && $is_ask_set != 'door_port' ]]; then
+                    msg "$is_err 无法使用 ($REPLY) 端口."
+                    continue
+                fi
+            }
+            [[ $(grep path <<<$is_ask_set) && ! $(is_test path "$REPLY") ]] && {
+                [[ ! $tmp_uuid ]] && get_uuid
+                msg "$is_err 请输入正确的路径, 例如: /$tmp_uuid"
+                continue
+            }
+            [[ $(grep uuid <<<$is_ask_set) && ! $(is_test uuid "$REPLY") ]] && {
+                [[ ! $tmp_uuid ]] && get_uuid
+                msg "$is_err 请输入正确的 UUID, 例如: $tmp_uuid"
+                continue
+            }
+            [[ $(grep ^y$ <<<$is_ask_set) ]] && { # Specific check for 'y' (yes)
+                if [[ $(grep -i ^y$ <<<"$REPLY") ]]; then 
+                    export $is_ask_set="$REPLY" # Set the variable to 'y' (or 'Y')
+                    break 
+                fi
+                msg "请输入 (y)" 
+                continue
+            }
             
-            export $is_ask_set="$REPLY"
-            msg "使用: ${!is_ask_set}"
-            break
-        else # List selection mode
-            if [[ $(is_test number "$REPLY") ]]; then 
-                is_ask_result=${is_tmp_list[$REPLY - 1]}
-                if [[ "$is_ask_result" ]]; then export $is_ask_set="$is_ask_result"; msg "选择: ${!is_ask_set}"; break; fi
-            fi
+            # If we reach here, REPLY is not empty and didn't fail specific validations.
+            # It's a general string input.
+            export $is_ask_set=$REPLY && msg "使用: ${!is_ask_set}" && break
+        else # Handling for list selection
+            [[ $(is_test number "$REPLY") ]] && is_ask_result=${is_tmp_list[$REPLY - 1]}
+            [[ $is_ask_result ]] && export $is_ask_set="$is_ask_result" && msg "选择: ${!is_ask_set}" && break
         fi
+
         msg "输入${is_err}"
     done
-    unset is_opt_msg is_opt_input_msg is_tmp_list is_ask_result is_default_arg is_emtpy_exit REPLY
+    unset is_opt_msg is_opt_input_msg is_tmp_list is_ask_result is_default_arg is_emtpy_exit
 }
 
 # create file
@@ -676,29 +675,7 @@ change() {
         ask string http_allow_list "请输入 http 白名单 (逗号分隔):"
         add $net
         ;;
-    19) # Change MTP Secret (assuming 19 is new index for MTP secret in change_list)
-        [[ "$net" != 'mtproto' ]] && err "("$is_config_file") 不是MTProto协议,不支持更改Secret."
-        local new_mtp_secret
-        ask string new_mtp_secret "请输入新 MTP Secret (原: ${mtp_secret:0:10}..., 留空自动生成):"
-        if [[ -z "$new_mtp_secret" ]]; then new_mtp_secret="$(rand_mtp_secret)"; fi
-        mtp_secret="$new_mtp_secret"
-        add "$net" # Call add with only protocol type, relies on global mtp_secret being set
-        ;;
-    20) # Toggle MTP Whitelist (assuming 20 is new index)
-        [[ "$net" != 'mtproto' ]] && err "("$is_config_file") 不是MTProto协议,不支持MTP白名单."
-        mtp_allow_enable=$((1 - ${mtp_allow_enable:-0}))
-        msg "MTP 白名单已$( [[ "$mtp_allow_enable" == 1 ]] && echo 启用 || echo 关闭 )"
-        if [[ "$mtp_allow_enable" == 1 && -z "$mtp_allow_list" ]]; then 
-            ask string mtp_allow_list "请输入 MTP 白名单IP (逗号分隔):"
-        fi            
-        add "$net"
-        ;;
-    21) # Set MTP Whitelist Content (assuming 21 is new index)
-        [[ "$net" != 'mtproto' ]] && err "("$is_config_file") 不是MTProto协议,不支持MTP白名单."
-        ask string mtp_allow_list "请输入 MTP 白名单IP (逗号分隔) (原: $mtp_allow_list):"
-        mtp_allow_enable=1 
-        add "$net"
-        ;;
+    # 已清除mtproto相关逻辑（19、20、21号位）
     esac
 }
 
@@ -815,13 +792,9 @@ manage() {
 
 # add a config
 add() {
-    is_lower="${1,,}"
-    if [[ "$is_lower" ]]; then
-        case "$is_lower" in
-        http) 
-            if [[ "$1" == "http" || "$1" == "Http" ]]; then is_new_protocol="http"; 
-            else is_new_protocol="VMess-${is_lower^^}"; fi ;; # Distinguish plain HTTP
-        mtp | mtproto) is_new_protocol="mtproto" ;; # Use lowercase internally
+    is_lower=${1,,}
+    if [[ $is_lower ]]; then
+        case $is_lower in
         ws | tcp | quic | http)
             is_new_protocol=VMess-${is_lower^^}
             ;;
@@ -854,9 +827,6 @@ add() {
             ;;
         http)
             is_new_protocol=Http
-            ;;
-        mtp | mtproto)
-            is_new_protocol=mtproto
             ;;
         *)
             for v in ${protocol_list[@]}; do
@@ -926,33 +896,8 @@ add() {
         is_use_http_allow_list=$6
         is_add_opts="[port] [username] [password] [allow_enable] [allow_list]"
         ;;
-    mtproto)
-        is_mtp=1 # Flag for MTProto
-        # Get port
-        if [[ "$2" == "auto" || -z "$2" ]]; then 
-            if [[ "$is_main_start" == 1 ]]; then ask string port "请输入 MTProto 端口:"; else get_port && port="$tmp_port"; fi
-        else port="$2"; fi
-        if ! is_test port "$port" || (is_test port_used "$port" && [[ ! "$is_gen" ]]); then err "MTProto 端口 ('$port') 无效或已被占用."; fi
-        
-        # Get secret
-        if [[ "$3" == "auto" || -z "$3" ]]; then 
-            if [[ "$is_main_start" == 1 ]]; then ask string mtp_secret "请输入 MTP Secret (留空自动生成):" && [[ -z "$mtp_secret" ]] && mtp_secret="$(rand_mtp_secret)"; else mtp_secret="$(rand_mtp_secret)"; fi
-        else mtp_secret="$3"; fi
-
-        # Get allow_enable (optional 4th param)
-        if [[ "$4" == "auto" ]]; then mtp_allow_enable=0;
-        elif [[ -n "$4" ]]; then mtp_allow_enable="$4"; 
-        elif [[ "$is_main_start" == 1 ]]; then ask string mtp_allow_enable "是否启用 MTP 白名单 (1=启用,0=禁用,默认0):" && mtp_allow_enable=${mtp_allow_enable:-0}; 
-        else mtp_allow_enable=0; fi
-
-        # Get allow_list (optional 5th param)
-        if [[ "$mtp_allow_enable" == 1 ]]; then
-            if [[ "$5" == "auto" ]]; then unset mtp_allow_list;
-            elif [[ -n "$5" ]]; then mtp_allow_list="$5";
-            elif [[ "$is_main_start" == 1 ]]; then ask string mtp_allow_list "请输入 MTP 白名单IP (逗号分隔):"; 
-            else mtp_allow_list=""; fi
-        else unset mtp_allow_list; fi
-    fi
+    # (MTProto 功能已清除)
+    esac
 
     [[ $1 && ! $is_change ]] && {
         msg "\n使用协议: $is_new_protocol"
@@ -1080,21 +1025,56 @@ add() {
 
             case ${is_new_protocol,,} in
             socks)
-                # set user
-                [[ ! $is_socks_user ]] && ask string is_socks_user "请设置用户名:"
-                # set password
-                [[ ! $is_socks_pass ]] && ask string is_socks_pass "请设置密码:"
+                # Ensure variables are reset for interactive mode if coming from elsewhere
+                is_socks_user= 
+                is_socks_pass=
+                ask string is_socks_user "请设置用户名 (留空自动生成):"
+                [[ -z "$is_socks_user" ]] && is_socks_user=$(rand_user) && msg "自动生成用户名: $is_socks_user"
+                
+                ask string is_socks_pass "请设置密码 (留空自动生成):"
+                [[ -z "$is_socks_pass" ]] && is_socks_pass=$(rand_user) && msg "自动生成密码: $is_socks_pass"
+                ;;
+            http) 
+                # Ensure variables are reset for interactive mode
+                http_user=
+                http_pass=
+                ask string http_user "请设置 HTTP 用户名 (留空自动生成):"
+                [[ -z "$http_user" ]] && http_user=$(rand_user) && msg "自动生成HTTP用户名: $http_user"
+                
+                ask string http_pass "请设置 HTTP 密码 (留空自动生成):"
+                [[ -z "$http_pass" ]] && http_pass=$(rand_user) && msg "自动生成HTTP密码: $http_pass"
                 ;;
             shadowsocks)
                 # set method
                 [[ ! $ss_method ]] && ask set_ss_method
                 # set password
                 [[ ! $ss_password ]] && ask string ss_password "请设置密码:"
+                [[ -z "$ss_password" ]] && ss_password=$(rand_user) && msg "留空则自动生成密码: $ss_password"
                 ;;
             esac
 
-        fi
-    fi
+            # --- Add Whitelist Setup for HTTP/Socks during interactive creation ---
+            if [[ "${is_new_protocol,,}" == "http" ]]; then
+                ask string http_allow_enable "是否启用 HTTP 白名单 (1=启用,0=禁用,默认0):" 
+                http_allow_enable=${http_allow_enable:-0} # Default to 0 if empty
+                if [[ "$http_allow_enable" == "1" ]]; then
+                    ask string http_allow_list "请输入 HTTP 白名单IP (逗号分隔):"
+                else
+                    http_allow_list=""
+                fi
+            elif [[ "${is_new_protocol,,}" == "socks" ]]; then
+                ask string socks_allow_enable "是否启用 Socks5 白名单 (1=启用,0=禁用,默认0):" 
+                socks_allow_enable=${socks_allow_enable:-0} # Default to 0 if empty
+                if [[ "$socks_allow_enable" == "1" ]]; then
+                    ask string socks_allow_list "请输入 Socks5 白名单IP (逗号分隔):"
+                else
+                    socks_allow_list=""
+                fi
+            fi
+            # --- End Whitelist Setup ---
+
+        fi # End of if [[ $is_main_start ]]
+    fi # End of if [[ $2 ]] (prefer args) or interactive setup
 
     # Dokodemo-Door
     if [[ $is_new_protocol == 'Direct' ]]; then
@@ -1132,7 +1112,7 @@ add() {
     fi
 
     # create json
-    create server "$is_new_protocol"
+    create server $is_new_protocol
 
     # show config info.
     info
@@ -1258,40 +1238,23 @@ get() {
             net=socks
             is_protocol=$net
             [[ ! $is_socks_user ]] && is_socks_user=$(rand_user)
-            [[ ! $is_socks_pass ]] && is_socks_pass=$uuid
+            [[ ! $is_socks_pass ]] && is_socks_pass=$(rand_user) # Changed from $uuid
             json_str="users:[{username: \"$is_socks_user\", password: \"$is_socks_pass\"}]"
-            [[ $socks_allow_enable == 1 && $socks_allow_list ]] && json_str+=" ,ip_whitelist:[$(echo $socks_allow_list | sed 's/,/\",\"/g;s/^/\"/;s/$/\"/')]"
+            # if [[ $socks_allow_enable == 1 && $socks_allow_list ]]; then # Temporarily disabled
+            #     if [[ $json_str ]]; then json_str+=","; else json_str=""; fi 
+            #     json_str+="ip_whitelist:[$(echo $socks_allow_list | sed 's/,/\",\"/g;s/^/\"/;s/$/\"/')]"; 
+            # fi
             ;;
         http*)
             net=http
             is_protocol=$net
-            [[ ! $http_user ]] && http_user=$(rand_user)
-            [[ ! $http_pass ]] && http_pass=$uuid
+            # http_user and http_pass will always have values (either user-provided or auto-generated by `add` function)
             json_str="users:[{username: \"$http_user\", password: \"$http_pass\"}]"
-            [[ $http_allow_enable == 1 && $http_allow_list ]] && json_str+=" ,ip_whitelist:[$(echo $http_allow_list | sed 's/,/\",\"/g;s/^/\"/;s/$/\"/')]"
-            ;;
-        mtproto*)
-            net="mtproto"
-            is_protocol="mtproto"
-            [[ ! "$mtp_secret" ]] && mtp_secret="$(rand_mtp_secret)"
-            json_str="secret:\"$mtp_secret\""
-            if [[ "$mtp_allow_enable" == 1 && -n "$mtp_allow_list" ]]; then
-                json_str+=",ip_whitelist:[$(echo "$mtp_allow_list" | sed 's/,/","/g;s/^/"/;s/$/"/')]"
-            fi
-            ;;
-        http) # Explicitly match lowercase "http" for plain HTTP proxy. is_lower comes from ${is_new_protocol,,}
-            net="http"
-            is_protocol="http" # CRITICAL: Use lowercase "http" for JSON type field
             
-            # Ensure http_user and http_pass are set (e.g. from add function)
-            # If not set (e.g. direct call to get protocol or incomplete state), default them here.
-            [[ -z "$http_user" ]] && http_user="$(rand_user)"
-            [[ -z "$http_pass" ]] && { get_uuid && http_pass="$tmp_uuid"; }
-            
-            json_str="users:[{username:\"$http_user\",password:\"$http_pass\"}]"
-            if [[ "$http_allow_enable" == 1 && -n "$http_allow_list" ]]; then
-                json_str+=",ip_whitelist:[$(echo "$http_allow_list" | sed 's/,/","/g;s/^/"/;s/$/"/')]"
-            fi
+            # [[ $http_allow_enable == 1 && $http_allow_list ]] && { # Temporarily disabled
+            #     if [[ $json_str ]]; then json_str+=","; else json_str=""; fi 
+            #     json_str+="ip_whitelist:[$(echo $http_allow_list | sed 's/,/\",\"/g;s/^/\"/;s/$/\"/')]"; 
+            # }
             ;;
         *)
             err "无法识别协议: $is_config_file"
@@ -1423,102 +1386,105 @@ get() {
 info() {
     local display_protocol_name 
     local is_color is_can_change is_info_show is_info_str is_url 
-    local is_type is_tcp_http is_quic_add is_insecure is_flow is_net_type_for_reality 
+    local is_type is_tcp_http is_quic_add is_insecure is_flow is_net_type 
     local i a tt 
 
     if [[ ! "$is_protocol" ]]; then get info "$1"; fi
-
-    # Construct display_protocol_name based on the actual is_protocol from JSON
-    # (This logic should be fairly stable from previous edits, ensuring it handles http and mtproto correctly for display)
-    if [[ "${is_protocol,,}" == "vless" && "$is_reality" == 1 ]]; then 
-        display_protocol_name="VLESS-REALITY"
-        if [[ "$net_type" == "h2" ]]; then display_protocol_name="VLESS-HTTP2-REALITY"; fi
-    elif [[ "${is_protocol,,}" == "http" ]]; then 
-        display_protocol_name="HTTP"
-    elif [[ "${is_protocol,,}" == "mtproto" ]]; then 
-        display_protocol_name="MTProto"
-    elif [[ "$host" && "$net" && "${is_protocol,,}" != "socks" && "${is_protocol,,}" != "direct" && "${is_protocol,,}" != "shadowsocks" && "${is_protocol,,}" != "tuic" && "${is_protocol,,}" != "hysteria2" ]]; then 
+    
+    # Construct display_protocol_name (REFINED LOGIC)
+    if [[ "$is_reality" == 1 ]]; then # Handles VLESS-REALITY and VLESS-HTTP2-REALITY
+        if [[ "$net_type" == "h2" ]]; then # Check net_type from get info for VLESS-HTTP2-REALITY
+            display_protocol_name="VLESS-HTTP2-REALITY"
+        else
+            display_protocol_name="VLESS-REALITY"
+        fi
+    elif [[ "$host" && ( "${is_protocol,,}" == "vmess" || "${is_protocol,,}" == "vless" || "${is_protocol,,}" == "trojan" ) && "$net" != "tcp" && "$net" != "udp" && "$net" != "" && "$net" != "reality" ]]; then # Common TLS with transport
         local transport_upper="${net^^}" 
         display_protocol_name="${is_protocol^^}-${transport_upper}-TLS"
-    elif [[ "${is_protocol,,}" == "vmess" && ( "$net" == "tcp" || "$net" == "http" || "$net" == "quic" ) && ! "$host" ]]; then 
+    elif [[ "$is_protocol" == "vmess" && ( "$net" == "tcp" || "$net" == "http" || "$net" == "quic" ) && ! "$host" ]]; then # Non-TLS VMess with specific transport
         display_protocol_name="VMESS-${net^^}"
-    else 
+    elif [[ "${is_protocol,,}" == "trojan" && ! "$host" ]]; then # Non-TLS Trojan
+        display_protocol_name="TROJAN"
+    elif [[ "${is_protocol,,}" == "hysteria2" && ! "$host" ]]; then # Non-TLS Hysteria2
+        display_protocol_name="HYSTERIA2"
+    elif [[ "${is_protocol,,}" == "tuic" && ! "$host" ]]; then # Non-TLS TUIC
+        display_protocol_name="TUIC"
+    else # Simple protocols (Socks, Http, MTProto, Direct, SS) or fallback
         display_protocol_name="${is_protocol^^}"
     fi
-    display_protocol_name="${display_protocol_name//-REALITY-REALITY/-REALITY}" 
-    [[ -z "$display_protocol_name" && "$is_protocol" ]] && display_protocol_name="${is_protocol^^}" 
+    # Ensure display_protocol_name is not empty
+    [[ -z "$display_protocol_name" && "$is_protocol" ]] && display_protocol_name="${is_protocol^^}"
 
     is_color=44
-    # CRITICAL: $net is set by `get protocol` which itself is called by `get info`.
-    # For plain HTTP proxy, `get protocol` should have set is_protocol="http" and net="http".
-    case "$net" in 
-        http) # Explicit case for PLAIN HTTP PROXY - This must come BEFORE more general transport types like tcp if $net could be ambiguous.
-            if [[ "${is_protocol,,}" == "http" ]]; then # Double check it's not VMess over HTTP transport
-                is_can_change=(0 1 13 14 17 18)
-                is_info_show=(0 1 2 19 10) # Protocol, Addr, Port, Username, Password
-                is_info_str=("$display_protocol_name" "$is_addr" "$port" "$http_user" "$http_pass")
-                is_url="http://$(echo -n "${http_user}:${http_pass}" | base64 -w 0)@${is_addr}:${port}#${display_protocol_name}-${is_addr}"
-                [[ "$http_allow_enable" == 1 ]] && msg "HTTP白名单已启用: $http_allow_list"
-            else # Fallback to a more general handler if $net is "http" but $is_protocol is not "http" (e.g. VMess-HTTP transport)
-                 # This logic is tricky, assuming VMess-HTTP (non-TLS) is handled under the 'tcp' net type with a specific 'type' check.
-                 # For now, let this be an error or a more generic display if it's reached unexpectedly.
-                 # The goal is to ensure plain HTTP hits the block above.
-                 # For VMess-HTTP (non-TLS), $is_protocol="vmess", $net="tcp", and json $net_type="http"
-                 # It will be caught by the `ws | tcp | h2 | quic)` case below.
-                echo "DEBUG: Unexpected path in info() for net=http, is_protocol=${is_protocol}" >&2 # Debug line
-            fi
-            ;;
-        mtproto)
-            is_can_change=(0 1 19 20 21); 
-            is_info_show=(0 1 2 22);      
-            is_info_str=("$display_protocol_name" "$is_addr" "$port" "$mtp_secret")
-            is_url="tg://proxy?server=$is_addr&port=$port&secret=$mtp_secret"
-            [[ "$mtp_allow_enable" == 1 ]] && msg "MTP白名单已启用: $mtp_allow_list"
-            ;;
-        ws | tcp | h2 | quic ) # General transports for VMess, VLESS-TLS, Trojan-TLS
-            if [[ "$host" ]]; then # TLS variants
+    case "$net" in # $net is crucial here, set by \`get protocol\` which is called by \`get info\`
+        ws | tcp | h2 | quic) # These are primarily transports (e.g. for VMess, VLESS, Trojan with TLS, or VMess non-TLS TCP/QUIC)
+            if [[ "$host" ]]; then # TLS variants (VMess/VLESS/Trojan with these transports + TLS)
                 is_color=45; is_can_change=(0 1 2 3 5); is_info_show=(0 1 2 3 4 6 7 8)
-                if [[ "${is_protocol,,}" == "vmess" ]]; then
+                local url_user_field="$uuid" # Default to UUID (for VMess, VLESS)
+                if [[ "${is_protocol,,}" == 'vmess' ]]; then
                     is_vmess_url=$(jq -c "{v:2,ps:\"${display_protocol_name}-${host}\",add:\"$is_addr\",port:\"$is_https_port\",id:\"$uuid\",aid:\"0\",net:\"$net\",host:\"$host\",path:\"$path\",tls:\"tls\"}" <<<"{}")
                     is_url="vmess://$(echo -n "$is_vmess_url" | base64 -w 0)"
-                elif [[ "${is_protocol,,}" == "vless" || "${is_protocol,,}" == "trojan" ]]; then
-                    local id_or_pass="$uuid"; if [[ "${is_protocol,,}" == "trojan" ]]; then id_or_pass="$password"; is_can_change=(0 1 2 3 4); is_info_show=(0 1 2 10 4 6 7 8); fi
-                    is_url="${is_protocol,,}://$id_or_pass@$host:$is_https_port?encryption=none&security=tls&type=$net&host=$host&path=$path#${display_protocol_name}-${host}"
+                elif [[ "${is_protocol,,}" == "vless" ]]; then
+                     is_url="${is_protocol}://$url_user_field@$host:$is_https_port?encryption=none&security=tls&type=$net&host=$host&path=$path#${display_protocol_name}-${host}"
+                elif [[ "${is_protocol,,}" == "trojan" ]]; then
+                    url_user_field="$password" # Trojan uses password
+                    is_can_change=(0 1 2 3 4); is_info_show=(0 1 2 10 4 6 7 8) # Adjust for Trojan password
+                    is_url="${is_protocol}://$url_user_field@$host:$is_https_port?encryption=none&security=tls&type=$net&host=$host&path=$path#${display_protocol_name}-${host}"
                 fi
+                is_info_str=("$is_protocol" "$is_addr" "$is_https_port" "$url_user_field" "$net" "$host" "$path" 'tls')
                 [[ "$is_caddy" ]] && is_can_change+=(11)
-                is_info_str=("$display_protocol_name" "$is_addr" "$is_https_port" "$uuid" "$net" "$host" "$path" 'tls')
-            else # Non-TLS VMess (e.g. VMess-TCP, VMess-QUIC) AND VMess-HTTP (non-TLS)
-                is_type=none; is_can_change=(0 1 5); is_info_show=(0 1 2 3 4); 
-                if [[ "${is_protocol,,}" == "vmess" && "$net" == "tcp" && "$net_type" == "http" ]]; then # Specifically VMess-HTTP (non-TLS)
-                    local current_display_protocol_name="VMESS-HTTP" # Override display name for this specific case
-                    is_type=http # This $is_type is used in VMess URL generation for type field
-                    is_info_str=("$current_display_protocol_name" "$is_addr" "$port" "$uuid" "tcp" "http") 
-                    is_info_show=(0 1 2 3 4 5) 
-                    is_vmess_url=$(jq -c "{v:2,ps:\"${current_display_protocol_name}-${is_addr}\",add:\"$is_addr\",port:\"$port\",id:\"$uuid\",aid:\"0\",net:\"tcp\",type:\"http\"}" <<<"{}")
-                else # Other non-TLS VMess (TCP, QUIC)
-                    is_info_str=("$display_protocol_name" "$is_addr" "$port" "$uuid" "$net")
-                    local q_add=""; if [[ "$net" == "quic" ]]; then is_insecure=1; is_info_show+=(8 9 20); is_info_str+=('tls' 'h3' 'true'); q_add=",tls:\"tls\",alpn:\"h3\""; fi
-                    is_vmess_url=$(jq -c "{v:2,ps:\"${display_protocol_name}-${is_addr}\",add:\"$is_addr\",port:\"$port\",id:\"$uuid\",aid:\"0\",net:\"$net\",type:\"$is_type\"${q_add}}" <<<"{}")
-                fi
+
+            elif [[ "${is_protocol,,}" == "vmess" && ! "$host" ]]; then # Non-TLS VMess with (tcp or quic) transport. VMess-HTTP is handled in 'http' case.
+                is_type=none; is_can_change=(0 1 5); is_info_show=(0 1 2 3 4); is_info_str=("$is_protocol" "$is_addr" "$port" "$uuid" "$net")
+                if [[ "$net" == "quic" ]]; then # VMess-QUIC (non-TLS)
+                    is_insecure=1; is_info_show+=(8 9 20); is_info_str+=('tls' 'h3' 'true'); is_quic_add=",tls:\"tls\",alpn:\"h3\""
+                is_vmess_url=$(jq -c "{v:2,ps:\"${display_protocol_name}-${is_addr}\",add:\"$is_addr\",port:\"$port\",id:\"$uuid\",aid:\"0\",net:\"$net\",type:\"$is_type\"$is_quic_add}" <<<"{}")
                 is_url="vmess://$(echo -n "$is_vmess_url" | base64 -w 0)"
-            fi ;;
-        ss) is_can_change=(0 1 4 6); is_info_show=(0 1 2 10 11); is_url="ss://$(echo -n "${ss_method}:${ss_password}" | base64 -w 0)@${is_addr}:${port}#${display_protocol_name}-${is_addr}"; is_info_str=("$display_protocol_name" "$is_addr" "$port" "$ss_password" "$ss_method") ;;    
-        trojan) # This case is for non-TLS Trojan ($net = "trojan")
-             is_insecure=1; is_can_change=(0 1 4); is_info_show=(0 1 2 10 4 8 20); is_url="trojan://$password@$is_addr:$port?type=tcp&security=tls&allowInsecure=1#${display_protocol_name}-${is_addr}"; is_info_str=("$display_protocol_name" "$is_addr" "$port" "$password" 'tcp' 'tls' 'true') ;;    
-        hy*) # Hysteria2 ($net = "hysteria2")
-             is_can_change=(0 1 4); is_info_show=(0 1 2 10 8 9 20); is_url="hysteria2://$password@$is_addr:$port?alpn=h3&insecure=1#${display_protocol_name}-${is_addr}"; is_info_str=("$display_protocol_name" "$is_addr" "$port" "$password" 'tls' 'h3' 'true') ;;    
-        tuic) # $net = "tuic"
-            is_insecure=1; is_can_change=(0 1 4 5); is_info_show=(0 1 2 3 10 8 9 20 21); is_url="tuic://$uuid:$password@$is_addr:$port?alpn=h3&allow_insecure=1&congestion_control=bbr#${display_protocol_name}-${is_addr}"; is_info_str=("$display_protocol_name" "$is_addr" "$port" "$uuid" "$password" 'tls' 'h3' 'true' 'bbr') ;;    
-        reality) # $net = "reality"
-            is_color=41; is_can_change=(0 1 5 9 10); is_info_show=(0 1 2 3 15 4 8 16 17 18); is_flow=xtls-rprx-vision; 
-            is_net_type_for_reality="tcp"; # Default for VLESS-REALITY
-            if [[ "$display_protocol_name" == "VLESS-HTTP2-REALITY" ]]; then is_flow=; is_net_type_for_reality=h2; is_info_show=(${is_info_show[@]/15/}); fi; 
-            is_info_str=("$display_protocol_name" "$is_addr" "$port" "$uuid" "$is_flow" "$is_net_type_for_reality" 'reality' "$is_servername" 'chrome' "$is_public_key")
-            is_url="vless://$uuid@$is_addr:$port?encryption=none&security=reality&flow=$is_flow&type=$is_net_type_for_reality&sni=$is_servername&pbk=$is_public_key&fp=chrome#${display_protocol_name}-${is_addr}" ;;    
-        direct) # $net = "direct"
-            is_can_change=(0 1 7 8); is_info_show=(0 1 2 13 14); is_info_str=("$display_protocol_name" "$is_addr" "$port" "$door_addr" "$door_port"); is_url="" ;;    
-        socks) # $net = "socks"
-            is_can_change=(0 1 12 4 15 16); is_info_show=(0 1 2 19 10); is_info_str=("$display_protocol_name" "$is_addr" "$port" "$is_socks_user" "$is_socks_pass"); is_url="socks://$(echo -n "${is_socks_user}:${is_socks_pass}" | base64 -w 0)@${is_addr}:${port}#${display_protocol_name}-${is_addr}"; [[ "$socks_allow_enable" == 1 ]] && msg "Socks白名单已启用: $socks_allow_list" ;;    
+                elif [[ "$net" == "tcp" ]]; then # VMess-TCP (non-TLS)
+                     is_vmess_url=$(jq -c "{v:2,ps:\"${display_protocol_name}-${is_addr}\",add:\"$is_addr\",port:\"$port\",id:\"$uuid\",aid:\"0\",net:\"$net\",type:\"$is_type\"}" <<<"{}")
+                     is_url="vmess://$(echo -n "$is_vmess_url" | base64 -w 0)"
+                fi
+            fi
+            ;;
+        http) # This case handles BOTH plain HTTP proxy AND VMess-HTTP (non-TLS) transport
+            if [[ "${is_protocol,,}" == "vmess" && ! "$host" ]]; then # VMess-HTTP (non-TLS transport)
+                # display_protocol_name for VMESS-HTTP is "VMESS-HTTP" from earlier logic
+                is_type=http; is_tcp_http=1; is_can_change=(0 1 5);
+                is_info_show=(0 1 2 3 4 5) # Protocol(VMess), Addr, Port, UUID, Network(http), Type(http)
+                is_info_str=("$is_protocol" "$is_addr" "$port" "$uuid" "http" "http")
+                is_vmess_url=$(jq -c "{v:2,ps:\"${display_protocol_name}-${is_addr}\",add:\"$is_addr\",port:\"$port\",id:\"$uuid\",aid:\"0\",net:\"http\",type:\"http\"}" <<<"{}")
+                is_url="vmess://$(echo -n "$is_vmess_url" | base64 -w 0)"
+            elif [[ "${is_protocol,,}" == "http" ]]; then # Plain HTTP Proxy
+                # display_protocol_name for plain HTTP is "HTTP" from earlier logic
+                is_can_change=(0 1 13 14 17 18)
+                is_info_show=(0 1 2) # Protocol, Addr, Port
+                is_info_str=("$is_protocol" "$is_addr" "$port")
+                local http_url_user_pass_segment=""
+                if [[ "$http_user" ]]; then
+                    http_url_user_pass_segment="$http_user"
+                    is_info_show+=(19) # Username from info_list
+                    is_info_str+=("$http_user")
+                    if [[ "$http_pass" ]]; then
+                        http_url_user_pass_segment+=":$http_pass"
+                        is_info_show+=(10) # Password from info_list
+                        is_info_str+=("$http_pass")
+                    fi
+                    http_url_user_pass_segment+="@"
+                fi
+                is_url="http://${http_url_user_pass_segment}${is_addr}:${port}#${display_protocol_name}-${is_addr}"
+                [[ "$http_allow_enable" == 1 && -n "$http_allow_list" ]] && msg "HTTP白名单已启用: $http_allow_list"
+            fi
+            ;;
+        ss) is_can_change=(0 1 4 6); is_info_show=(0 1 2 10 11); is_url="ss://$(echo -n "${ss_method}:${ss_password}" | base64 -w 0)@${is_addr}:${port}#${display_protocol_name}-${is_addr}"; is_info_str=("$is_protocol" "$is_addr" "$port" "$ss_password" "$ss_method") ;;    
+        trojan) is_insecure=1; is_can_change=(0 1 4); is_info_show=(0 1 2 10 4 8 20); is_url="trojan://$password@$is_addr:$port?type=tcp&security=tls&allowInsecure=1#${display_protocol_name}-${is_addr}"; is_info_str=("$is_protocol" "$is_addr" "$port" "$password" 'tcp' 'tls' 'true') ;;    
+        hy*) is_can_change=(0 1 4); is_info_show=(0 1 2 10 8 9 20); is_url="hysteria2://$password@$is_addr:$port?alpn=h3&insecure=1#${display_protocol_name}-${is_addr}"; is_info_str=("$is_protocol" "$is_addr" "$port" "$password" 'tls' 'h3' 'true') ;;    
+        tuic) is_insecure=1; is_can_change=(0 1 4 5); is_info_show=(0 1 2 3 10 8 9 20 21); is_url="tuic://$uuid:$password@$is_addr:$port?alpn=h3&allow_insecure=1&congestion_control=bbr#${display_protocol_name}-${is_addr}"; is_info_str=("$is_protocol" "$is_addr" "$port" "$uuid" "$password" 'tls' 'h3' 'true' 'bbr') ;;    
+        reality) is_color=41; is_can_change=(0 1 5 9 10); is_info_show=(0 1 2 3 15 4 8 16 17 18); is_flow=xtls-rprx-vision; local current_net_type_for_reality="tcp"; if [[ "$display_protocol_name" == "VLESS-HTTP2-REALITY" ]]; then is_flow=; current_net_type_for_reality=h2; is_info_show=(${is_info_show[@]/15/}); fi; is_info_str=("$is_protocol" "$is_addr" "$port" "$uuid" "$is_flow" "$current_net_type_for_reality" 'reality' "$is_servername" 'chrome' "$is_public_key"); is_url="vless://$uuid@$is_addr:$port?encryption=none&security=reality&flow=$is_flow&type=$current_net_type_for_reality&sni=$is_servername&pbk=$is_public_key&fp=chrome#${display_protocol_name}-${is_addr}" ;;    
+        direct) is_can_change=(0 1 7 8); is_info_show=(0 1 2 13 14); is_info_str=("$is_protocol" "$is_addr" "$port" "$door_addr" "$door_port"); is_url="" ;;    
+        socks) is_can_change=(0 1 12 4 15 16); is_info_show=(0 1 2 19 10); is_info_str=("$is_protocol" "$is_addr" "$port" "$is_socks_user" "$is_socks_pass"); is_url="socks://$(echo -n "${is_socks_user}:${is_socks_pass}" | base64 -w 0)@${is_addr}:${port}#${display_protocol_name}-${is_addr}"; [[ "$socks_allow_enable" == 1 && -n "$socks_allow_list" ]] && msg "Socks白名单已启用: $socks_allow_list" ;;
+        mtproto) 
+        # 已移除MTProto相关内容
+        ;;
     esac
     [[ $is_dont_show_info || $is_gen || $is_dont_auto_exit ]] && return # dont show info
     msg "-------------- $is_config_name -------------"
@@ -1883,394 +1849,4 @@ rand_user() {
 
 rand_mtp_secret() {
     openssl rand -hex 16
-}
-
-_handle_params_mtproto() {
-    local p_port="$1" p_secret="$2" p_allow_enable="$3" p_allow_list="$4"
-    if [[ "$is_main_start" == 1 ]]; then # INTERACTIVE MODE
-        # Port
-        if [[ -z "$port" ]]; then # Only ask if not preset
-            ask string port "请输入 MTProto 端口:"
-            if [[ -z "$port" ]]; then get_port && port="$tmp_port" && msg "MTProto 端口已自动获取: $port"; fi
-        fi
-        if ! is_test port "$port" || (is_test port_used "$port" && [[ ! "$is_gen" && "$port" != "$p_port" ]] ); then err "MTProto 端口 ('$port') 无效或已被占用. $is_err_tips"; fi
-
-        # Secret
-        if [[ -z "$mtp_secret" ]]; then # Only ask if not preset
-            ask string mtp_secret "请输入 MTP Secret (留空自动生成):"
-            if [[ -z "$mtp_secret" ]]; then mtp_secret="$(rand_mtp_secret)"; msg "MTP Secret 已自动生成."; fi
-        fi
-        
-        # Whitelist Enable
-        if [[ -z "$mtp_allow_enable" ]]; then # Only ask if not preset (note: allow_enable can be explicitly 0)
-            ask string mtp_allow_enable "是否启用 MTP 白名单 (1=启用,0=禁用,默认0):"
-            if [[ -z "$mtp_allow_enable" ]]; then mtp_allow_enable=0; msg "MTP 白名单默认设置为: 禁用"; fi
-        fi
-        
-        # Whitelist List (only if enabled)
-        if [[ "$mtp_allow_enable" == 1 ]]; then
-            if [[ -z "$mtp_allow_list" ]];then # Only ask if not preset and enabled
-                ask string mtp_allow_list "请输入 MTP 白名单IP (逗号分隔):"
-            fi
-        else 
-            unset mtp_allow_list
-        fi
-    else # NON-INTERACTIVE MODE (CLI params or defaults from globals)
-        if [[ -n "$p_port" ]]; then if [[ "$p_port" == "auto" ]]; then get_port && port="$tmp_port"; else port="$p_port"; fi
-        elif [[ -z "$port" ]]; then get_port && port="$tmp_port";fi
-        if ! is_test port "$port" || (is_test port_used "$port" && [[ ! "$is_gen" && "$port" != "$p_port" ]] ); then err "MTProto 端口 ('$port') 无效或已被占用. $is_err_tips"; fi
-
-        if [[ -n "$p_secret" ]]; then if [[ "$p_secret" == "auto" ]]; then mtp_secret="$(rand_mtp_secret)"; else mtp_secret="$p_secret"; fi
-        elif [[ -z "$mtp_secret" ]]; then mtp_secret="$(rand_mtp_secret)"; fi
-
-        if [[ -n "$p_allow_enable" ]]; then if [[ "$p_allow_enable" == "auto" ]]; then mtp_allow_enable=0; else mtp_allow_enable="$p_allow_enable"; fi
-        elif [[ ! "$mtp_allow_enable" && "$mtp_allow_enable" != "0" ]]; then mtp_allow_enable=0; fi # Default to 0 if completely unset
-
-        if [[ "$mtp_allow_enable" == 1 ]]; then
-            if [[ -n "$p_allow_list" ]]; then if [[ "$p_allow_list" == "auto" ]]; then unset mtp_allow_list; else mtp_allow_list="$p_allow_list"; fi
-            elif [[ -z "$mtp_allow_list" ]]; then mtp_allow_list=""; fi # Default to empty list if enabled and no list provided
-        else unset mtp_allow_list; fi
-    fi
-}
-
-_handle_params_socks() {
-    local p_port="$1" p_user="$2" p_pass="$3" p_allow_enable="$4" p_allow_list="$5"
-    if [[ "$is_main_start" == 1 ]]; then
-        if [[ -z "$port" ]]; then 
-            ask string port "请输入 Socks 端口:"
-            if [[ -z "$port" ]]; then get_port && port="$tmp_port" && msg "Socks 端口已自动获取: $port"; fi
-        fi
-        if ! is_test port "$port" || (is_test port_used "$port" && [[ ! "$is_gen" && "$port" != "$p_port" ]] ); then err "Socks 端口 ('$port') 无效或已被占用. $is_err_tips"; fi
-
-        if [[ -z "$is_socks_user" ]]; then
-            ask string is_socks_user "请输入 Socks 用户名 (留空自动生成):"
-            if [[ -z "$is_socks_user" ]]; then is_socks_user="$(rand_user)"; msg "Socks 用户名已自动生成: $is_socks_user"; fi
-        fi
-        
-        if [[ -z "$is_socks_pass" ]]; then
-            ask string is_socks_pass "请输入 Socks 密码 (留空自动生成):"
-            if [[ -z "$is_socks_pass" ]]; then get_uuid && is_socks_pass="$tmp_uuid" && msg "Socks 密码已自动生成."; fi
-        fi
-
-        if [[ ! "$socks_allow_enable" && "$socks_allow_enable" != "0" ]]; then
-            ask string socks_allow_enable "是否启用 Socks 白名单 (1=启用,0=禁用,默认0):"
-            if [[ -z "$socks_allow_enable" ]]; then socks_allow_enable=0; msg "Socks 白名单默认设置为: 禁用"; fi
-        fi
-        if [[ "$socks_allow_enable" == 1 ]]; then 
-            if [[ -z "$socks_allow_list" ]]; then ask string socks_allow_list "请输入 Socks 白名单IP (逗号分隔):"; fi
-        else unset socks_allow_list; fi
-    else # Non-interactive
-        if [[ -n "$p_port" ]]; then if [[ "$p_port" == "auto" ]]; then get_port && port="$tmp_port"; else port="$p_port"; fi
-        elif [[ -z "$port" ]]; then get_port && port="$tmp_port"; fi
-        if ! is_test port "$port" || (is_test port_used "$port" && [[ ! "$is_gen" && "$port" != "$p_port" ]] ); then err "Socks 端口 ('$port') 无效或已被占用. $is_err_tips"; fi
-
-        if [[ -n "$p_user" ]]; then if [[ "$p_user" == "auto" ]]; then is_socks_user="$(rand_user)"; else is_socks_user="$p_user"; fi
-        elif [[ -z "$is_socks_user" ]]; then is_socks_user="$(rand_user)"; fi
-
-        if [[ -n "$p_pass" ]]; then if [[ "$p_pass" == "auto" ]]; then get_uuid && is_socks_pass="$tmp_uuid"; else is_socks_pass="$p_pass"; fi
-        elif [[ -z "$is_socks_pass" ]]; then get_uuid && is_socks_pass="$tmp_uuid"; fi
-
-        if [[ -n "$p_allow_enable" ]]; then if [[ "$p_allow_enable" == "auto" ]]; then socks_allow_enable=0; else socks_allow_enable="$p_allow_enable"; fi
-        elif [[ ! "$socks_allow_enable" && "$socks_allow_enable" != "0" ]]; then socks_allow_enable=0; fi
-
-        if [[ "$socks_allow_enable" == 1 ]]; then
-            if [[ -n "$p_allow_list" ]]; then if [[ "$p_allow_list" == "auto" ]]; then unset socks_allow_list; else socks_allow_list="$p_allow_list"; fi
-            elif [[ -z "$socks_allow_list" ]]; then socks_allow_list=""; fi
-        else unset socks_allow_list; fi
-    fi
-}
-
-_handle_params_http() {
-    local p_port="$1" p_user="$2" p_pass="$3" p_allow_enable="$4" p_allow_list="$5"
-    if [[ "$is_main_start" == 1 ]]; then
-        if [[ -z "$port" ]]; then
-            ask string port "请输入 HTTP 代理端口:"
-            if [[ -z "$port" ]]; then get_port && port="$tmp_port" && msg "HTTP 端口已自动获取: $port"; fi
-        fi
-        if ! is_test port "$port" || (is_test port_used "$port" && [[ ! "$is_gen" && "$port" != "$p_port" ]] ); then err "HTTP 代理端口 ('$port') 无效或已被占用. $is_err_tips"; fi
-
-        if [[ -z "$http_user" ]]; then
-            ask string http_user "请输入 HTTP 用户名 (留空自动生成):"
-            if [[ -z "$http_user" ]]; then http_user="$(rand_user)"; msg "HTTP 用户名已自动生成: $http_user"; fi
-        fi
-
-        if [[ -z "$http_pass" ]]; then
-            ask string http_pass "请输入 HTTP 密码 (留空自动生成):"
-            if [[ -z "$http_pass" ]]; then get_uuid && http_pass="$tmp_uuid" && msg "HTTP 密码已自动生成."; fi
-        fi
-
-        if [[ ! "$http_allow_enable" && "$http_allow_enable" != "0" ]]; then
-            ask string http_allow_enable "是否启用 HTTP 白名单 (1=启用,0=禁用,默认0):"
-            if [[ -z "$http_allow_enable" ]]; then http_allow_enable=0; msg "HTTP 白名单默认设置为: 禁用"; fi
-        fi
-        if [[ "$http_allow_enable" == 1 ]]; then 
-            if [[ -z "$http_allow_list" ]]; then ask string http_allow_list "请输入 HTTP 白名单IP (逗号分隔):"; fi
-        else unset http_allow_list; fi
-    else # Non-interactive
-        if [[ -n "$p_port" ]]; then if [[ "$p_port" == "auto" ]]; then get_port && port="$tmp_port"; else port="$p_port"; fi
-        elif [[ -z "$port" ]]; then get_port && port="$tmp_port"; fi
-        if ! is_test port "$port" || (is_test port_used "$port" && [[ ! "$is_gen" && "$port" != "$p_port" ]] ); then err "HTTP 代理端口 ('$port') 无效或已被占用. $is_err_tips"; fi
-
-        if [[ -n "$p_user" ]]; then if [[ "$p_user" == "auto" ]]; then http_user="$(rand_user)"; else http_user="$p_user"; fi
-        elif [[ -z "$http_user" ]]; then http_user="$(rand_user)"; fi
-
-        if [[ -n "$p_pass" ]]; then if [[ "$p_pass" == "auto" ]]; then get_uuid && http_pass="$tmp_uuid"; else http_pass="$p_pass"; fi
-        elif [[ -z "$http_pass" ]]; then get_uuid && http_pass="$tmp_uuid"; fi
-
-        if [[ -n "$p_allow_enable" ]]; then if [[ "$p_allow_enable" == "auto" ]]; then http_allow_enable=0; else http_allow_enable="$p_allow_enable"; fi
-        elif [[ ! "$http_allow_enable" && "$http_allow_enable" != "0" ]]; then http_allow_enable=0; fi
-
-        if [[ "$http_allow_enable" == 1 ]]; then
-            if [[ -n "$p_allow_list" ]]; then if [[ "$p_allow_list" == "auto" ]]; then unset http_allow_list; else http_allow_list="$p_allow_list"; fi
-            elif [[ -z "$http_allow_list" ]]; then http_allow_list=""; fi
-        else unset http_allow_list; fi
-    fi
-}
-
-_handle_params_reality() {
-    local p_port="$1" p_uuid="$2" p_sni="$3"
-    is_reality=1 
-    if [[ "$is_main_start" == 1 ]]; then # INTERACTIVE MODE FOR REALITY
-        # Port
-        if [[ -z "$port" ]]; then # Only ask if not preset (e.g., from `change` context)
-            ask string port "请输入 REALITY 端口 (留空自动生成):" 
-            if [[ -z "$port" ]]; then get_port && port="$tmp_port" && msg "REALITY 端口已自动获取: $port"; fi
-        fi
-        # Validate port after potential input or auto-generation
-        if ! is_test port "$port" || (is_test port_used "$port" && [[ ! "$is_gen" && "$port" != "$p_port" ]] ); then err "REALITY 端口 ('$port') 无效或已被占用. $is_err_tips"; fi
-
-        # UUID
-        if [[ -z "$uuid" ]]; then # Only ask if not preset
-            ask string uuid "请输入 REALITY UUID (留空自动生成):"
-            if [[ -z "$uuid" ]]; then get_uuid && uuid="$tmp_uuid" && msg "REALITY UUID 已自动生成."; fi
-        fi
-        # Validate UUID after potential input or auto-generation
-        if ! is_test uuid "$uuid" && [[ -n "$uuid" ]]; then err "提供的 REALITY UUID ('$uuid') 无效. $is_err_tips"; fi
-        # Ensure UUID is set if it was initially empty and auto-generation somehow failed (though get_uuid should provide one)
-        [[ -z "$uuid" ]] && { get_uuid && uuid="$tmp_uuid"; }
-
-        # ServerName (SNI)
-        if [[ -z "$is_servername" ]]; then # Only ask if not preset
-            ask string is_servername "请输入 REALITY serverName (例如 www.microsoft.com, 留空随机):"
-            if [[ -z "$is_servername" ]]; then is_servername="$is_random_servername" && msg "REALITY serverName 已随机选择: $is_servername"; fi
-        fi
-        # Ensure SNI is set if it was initially empty and random selection somehow failed (is_random_servername should provide one)
-        [[ -z "$is_servername" ]] && is_servername="$is_random_servername"
-    else # NON-INTERACTIVE MODE for REALITY (this part should be okay from previous edits)
-        if [[ -n "$p_port" ]]; then 
-            if [[ "$p_port" == "auto" ]]; then get_port && port="$tmp_port"; else port="$p_port"; fi
-        elif [[ -z "$port" ]]; then 
-            get_port && port="$tmp_port"
-        fi
-        if ! is_test port "$port" || (is_test port_used "$port" && [[ ! "$is_gen" && "$port" != "$p_port" ]] ); then err "REALITY 端口 ('$port') 无效或已被占用. $is_err_tips"; fi
-
-        if [[ -n "$p_uuid" ]]; then 
-            if [[ "$p_uuid" == "auto" ]]; then get_uuid && uuid="$tmp_uuid"; else uuid="$p_uuid"; fi
-        elif [[ -z "$uuid" ]]; then 
-            get_uuid && uuid="$tmp_uuid"
-        fi
-        if ! is_test uuid "$uuid" && [[ -n "$uuid" ]]; then err "提供的 REALITY UUID ('$uuid') 无效. $is_err_tips"; fi
-        [[ -z "$uuid" ]] && { get_uuid && uuid="$tmp_uuid"; } 
-
-        if [[ -n "$p_sni" ]]; then 
-            if [[ "$p_sni" == "auto" ]]; then is_servername="$is_random_servername"; else is_servername="$p_sni"; fi
-        elif [[ -z "$is_servername" ]]; then 
-            is_servername="$is_random_servername"
-        fi
-        [[ -z "$is_servername" ]] && is_servername="$is_random_servername"
-    fi
-    # These final ensures are for cases where variables might still be empty after all logic (e.g. if non-interactive and no params, or if globals were initially empty)
-    [[ -z "$port" ]] && { get_port && port="$tmp_port"; } 
-    [[ -z "$uuid" ]] && { get_uuid && uuid="$tmp_uuid"; } 
-    [[ -z "$is_servername" ]] && is_servername="$is_random_servername"
-    unset password 
-}
-
-_handle_params_shadowsocks() {
-    local p_port="$1" p_pass="$2" p_method="$3"
-    if [[ "$is_main_start" == 1 ]]; then # INTERACTIVE MODE
-        # Port
-        if [[ -z "$port" ]]; then # Only ask if not preset
-            ask string port "请输入 Shadowsocks 端口:"
-            if [[ -z "$port" ]]; then get_port && port="$tmp_port" && msg "Shadowsocks 端口已自动获取: $port"; fi
-        fi
-        # Validate port after potential input or auto-generation
-        if ! is_test port "$port" || (is_test port_used "$port" && [[ ! "$is_gen" && "$port" != "$p_port" ]] ); then err "Shadowsocks 端口 ('$port') 无效或已被占用. $is_err_tips"; fi
-        
-        # Method
-        if [[ -z "$ss_method" ]]; then # Only ask if not preset
-            ask set_ss_method # This uses $is_random_ss_method as default if REPLY is empty
-            if [[ -z "$ss_method" ]]; then ss_method="$is_random_ss_method"; msg "Shadowsocks 加密方式已随机设置为: $ss_method"; fi # Fallback
-        fi
-        
-        # Password
-        if [[ -z "$ss_password" ]]; then # Only ask if not preset
-            ask string ss_password "请输入 Shadowsocks 密码 (留空自动生成):"
-            if [[ -z "$ss_password" ]]; then 
-                if [[ "$ss_method" == *2022* ]]; then ss_password="$(get ss2022)"; else get_uuid && ss_password="$tmp_uuid"; fi
-                msg "Shadowsocks 密码已自动生成."
-            fi
-        fi
-    else # NON-INTERACTIVE MODE
-        if [[ -n "$p_port" ]]; then if [[ "$p_port" == "auto" ]]; then get_port && port="$tmp_port"; else port="$p_port"; fi
-        elif [[ -z "$port" ]]; then get_port && port="$tmp_port"; fi
-        if ! is_test port "$port" || (is_test port_used "$port" && [[ ! "$is_gen" && "$port" != "$p_port" ]] ); then err "Shadowsocks 端口 ('$port') 无效或已被占用. $is_err_tips"; fi
-
-        if [[ -n "$p_method" ]]; then 
-            if [[ "$p_method" == "auto" ]]; then ss_method="$is_random_ss_method"; 
-            else 
-                local found_method_cli_ss_ni=
-                for m_cli_ss_ni in "${ss_method_list[@]}"; do if [[ "$(echo "$m_cli_ss_ni" | tr '[:upper:]' '[:lower:]')" == "$(echo "$p_method" | tr '[:upper:]' '[:lower:]')" ]]; then ss_method="$m_cli_ss_ni"; found_method_cli_ss_ni=1; break; fi; done
-                [[ ! "$found_method_cli_ss_ni" ]] && err "Shadowsocks 加密方法 ('$p_method') 无效. $is_err_tips"
-            fi
-        elif [[ -z "$ss_method" ]]; then ss_method="$is_random_ss_method"; fi
-        
-        # Ensure ss_password is set
-        if [[ -n "$p_pass" ]]; then 
-            if [[ "$p_pass" == "auto" ]]; then if [[ "$ss_method" == *2022* ]]; then ss_password="$(get ss2022)"; else get_uuid && ss_password="$tmp_uuid"; fi
-            else ss_password="$p_pass"; fi
-        elif [[ -z "$ss_password" ]]; then 
-            if [[ "$ss_method" == *2022* ]]; then ss_password="$(get ss2022)"; else get_uuid && ss_password="$tmp_uuid"; fi
-        fi
-    fi
-}
-
-_handle_params_tls_common() {
-    local p_host="$1" p_id_or_pass="$2" p_path="$3"
-    if [[ "$is_main_start" == 1 ]]; then # INTERACTIVE MODE FOR TLS COMMON
-        # Host (Mandatory)
-        if [[ -z "$host" ]]; then 
-            ask string host "请输入域名:"
-            if [[ -z "$host" ]]; then err "TLS 协议域名不能为空. $is_err_tips"; fi
-        fi
-        if ! is_test domain "$host"; then err "域名 ('$host') 无效. $is_err_tips"; fi
-        is_use_tls=1;
-
-        # Path
-        if [[ -z "$path" ]]; then
-            ask string path "请输入路径 (例如 /wspath, 留空自动生成):"
-            if [[ -z "$path" ]]; then get_uuid && path="/$tmp_uuid" && msg "路径已自动生成: $path"; fi
-        fi
-        if ! is_test path "$path" && [[ -n "$path" ]]; then err "提供的路径 ('$path') 无效. $is_err_tips"; fi
-        [[ -z "$path" ]] && { get_uuid && path="/$tmp_uuid"; } # Final ensure path is set
-
-        # UUID or Password based on protocol type
-        if [[ "${is_new_protocol,,}" == "vmess-"*"-tls" || "${is_new_protocol,,}" == "vless-"*"-tls" ]]; then
-            if [[ -z "$uuid" ]]; then
-                ask string uuid "请输入 UUID (留空自动生成):"
-                if [[ -z "$uuid" ]]; then get_uuid && uuid="$tmp_uuid" && msg "UUID 已自动生成."; fi
-            fi
-            if ! is_test uuid "$uuid" && [[ -n "$uuid" ]]; then err "提供的 UUID ('$uuid') 无效. $is_err_tips"; fi
-            [[ -z "$uuid" ]] && { get_uuid && uuid="$tmp_uuid"; } # Final ensure
-            unset password 
-        elif [[ "${is_new_protocol,,}" == "trojan-"*"-tls" ]]; then
-            if [[ -z "$password" ]]; then
-                ask string password "请输入密码 (留空自动生成):"
-                if [[ -z "$password" ]]; then get_uuid && password="$tmp_uuid" && msg "密码已自动生成."; fi
-            fi
-            [[ -z "$password" ]] && { get_uuid && password="$tmp_uuid"; } # Final ensure
-            unset uuid 
-        fi
-    else # NON-INTERACTIVE MODE for TLS common
-        if [[ -n "$p_host" ]]; then 
-            if [[ "$p_host" == "auto" ]]; then if [[ -z "$host" ]]; then err "TLS主机不支持 'auto' 且全局主机变量未被预设. $is_err_tips"; fi ; 
-            else host="$p_host"; fi
-        elif [[ -z "$host" ]]; then err "TLS 协议需要一个明确的域名(host). $is_err_tips"; fi
-        if ! is_test domain "$host"; then err "域名 ('$host') 无效. $is_err_tips"; fi
-        is_use_tls=1;
-
-        if [[ -n "$p_path" ]]; then if [[ "$p_path" == "auto" ]]; then get_uuid && path="/$tmp_uuid"; else path="$p_path"; fi
-        elif [[ -z "$path" ]]; then get_uuid && path="/$tmp_uuid"; fi
-        if ! is_test path "$path" && [[ -n "$path" ]]; then err "提供的路径 ('$path') 无效. $is_err_tips"; fi
-        [[ -z "$path" ]] && { get_uuid && path="/$tmp_uuid"; }
-
-        if [[ "${is_new_protocol,,}" == "vmess-"*"-tls" || "${is_new_protocol,,}" == "vless-"*"-tls" ]]; then
-            if [[ -n "$p_id_or_pass" ]]; then if [[ "$p_id_or_pass" == "auto" ]]; then get_uuid && uuid="$tmp_uuid"; else uuid="$p_id_or_pass"; fi
-            elif [[ -z "$uuid" ]]; then get_uuid && uuid="$tmp_uuid"; fi
-            if ! is_test uuid "$uuid" && [[ -n "$uuid" ]]; then err "提供的 UUID ('$uuid') 无效. $is_err_tips"; fi
-            [[ -z "$uuid" ]] && { get_uuid && uuid="$tmp_uuid"; }
-            unset password 
-        elif [[ "${is_new_protocol,,}" == "trojan-"*"-tls" ]]; then
-            if [[ -n "$p_id_or_pass" ]]; then if [[ "$p_id_or_pass" == "auto" ]]; then get_uuid && password="$tmp_uuid"; else password="$p_id_or_pass"; fi
-            elif [[ -z "$password" ]]; then get_uuid && password="$tmp_uuid"; fi
-            [[ -z "$password" ]] && { get_uuid && password="$tmp_uuid"; }
-            unset uuid 
-        fi
-    fi
-}
-
-_handle_params_vmess_tuic_non_tls() {
-    local p_port="$1" p_uuid="$2"
-    if [[ "$is_main_start" == 1 ]]; then # INTERACTIVE MODE
-        # Port
-        if [[ -z "$port" ]]; then # Only ask if not preset (e.g., by change command)
-            ask string port "请输入端口:"
-            if [[ -z "$port" ]]; then get_port && port="$tmp_port" && msg "端口已自动获取: $port"; fi
-        fi
-        # Validate port after potential input or auto-generation from empty ask
-        if ! is_test port "$port" || (is_test port_used "$port" && [[ ! "$is_gen" ]]); then err "端口 ('$port') 无效或已被占用. $is_err_tips"; fi
-
-        # UUID
-        if [[ -z "$uuid" ]]; then # Only ask if not preset
-            ask string uuid "请输入 UUID (留空自动生成):"
-            if [[ -z "$uuid" ]]; then get_uuid && uuid="$tmp_uuid" && msg "UUID 已自动生成."; fi
-        fi
-        # Validate UUID after potential input or auto-generation
-        if ! is_test uuid "$uuid" && [[ -n "$uuid" ]]; then err "提供的 UUID ('$uuid') 无效. $is_err_tips"; fi
-        # Final ensure UUID is set if it was initially empty and auto-generation somehow failed (though get_uuid should provide one)
-        [[ -z "$uuid" ]] && { get_uuid && uuid="$tmp_uuid"; }
-    else # NON-INTERACTIVE MODE for VMess/TUIC non-TLS (using p_port, p_uuid from CLI args)
-        # Port from CLI param p_port (which is $2 from add() call) or auto/global
-        if [[ -n "$p_port" ]]; then 
-            if [[ "$p_port" == "auto" ]]; then get_port && port="$tmp_port"; else port="$p_port"; fi
-        elif [[ -z "$port" ]]; then # Global $port is also empty, and no CLI param
-            get_port && port="$tmp_port"
-        fi
-        if ! is_test port "$port" || (is_test port_used "$port" && [[ ! "$is_gen" ]]); then err "端口 ('$port') 无效或已被占用. $is_err_tips"; fi
-        
-        # UUID from CLI param p_uuid (which is $3 from add() call) or auto/global
-        if [[ -n "$p_uuid" ]]; then 
-            if [[ "$p_uuid" == "auto" ]]; then get_uuid && uuid="$tmp_uuid"; else uuid="$p_uuid"; fi
-        elif [[ -z "$uuid" ]]; then # Global $uuid is also empty, and no CLI param
-            get_uuid && uuid="$tmp_uuid"
-        fi
-        if ! is_test uuid "$uuid" && [[ -n "$uuid" ]]; then err "提供的 UUID ('$uuid') 无效. $is_err_tips"; fi
-        [[ -z "$uuid" ]] && { get_uuid && uuid="$tmp_uuid"; } # Final ensure UUID is set
-    fi
-    unset password # Ensure password is not set for these protocols
-    # For TUIC, password might be set to UUID. This is typically handled in `get protocol`.
-    if [[ "${is_new_protocol,,}" == "tuic" && -z "$password" ]]; then password="$uuid"; fi 
-}
-
-_handle_params_trojan_hysteria_non_tls() {
-    local p_port="$1" p_pass="$2"
-    if [[ "$is_main_start" == 1 ]]; then # INTERACTIVE MODE
-        # Port
-        if [[ -z "$port" ]]; then # Only ask if not preset
-            ask string port "请输入端口:"
-            if [[ -z "$port" ]]; then get_port && port="$tmp_port" && msg "端口已自动获取: $port"; fi
-        fi
-        if ! is_test port "$port" || (is_test port_used "$port" && [[ ! "$is_gen" ]]); then err "端口 ('$port') 无效或已被占用. $is_err_tips"; fi
-
-        # Password
-        if [[ -z "$password" ]]; then # Only ask if not preset
-            ask string password "请输入密码 (留空自动生成):"
-            if [[ -z "$password" ]]; then get_uuid && password="$tmp_uuid" && msg "密码已自动生成."; fi
-        fi
-        # Ensure password is set if it was initially empty and auto-generation somehow failed
-        [[ -z "$password" ]] && { get_uuid && password="$tmp_uuid"; } 
-    else # NON-INTERACTIVE MODE for Trojan/Hysteria non-TLS
-        # Port
-        if [[ -n "$p_port" ]]; then 
-            if [[ "$p_port" == "auto" ]]; then get_port && port="$tmp_port"; else port="$p_port"; fi
-        elif [[ -z "$port" ]]; then get_port && port="$tmp_port"; fi
-        if ! is_test port "$port" || (is_test port_used "$port" && [[ ! "$is_gen" ]]); then err "端口 ('$port') 无效或已被占用. $is_err_tips"; fi
-
-        # Password
-        if [[ -n "$p_pass" ]]; then 
-            if [[ "$p_pass" == "auto" ]]; then get_uuid && password="$tmp_uuid"; else password="$p_pass"; fi
-        elif [[ -z "$password" ]]; then get_uuid && password="$tmp_uuid"; fi
-        [[ -z "$password" ]] && { get_uuid && password="$tmp_uuid"; } 
-    fi
-    unset uuid # Ensure UUID is not set for these protocols
 }
