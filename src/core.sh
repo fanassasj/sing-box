@@ -336,21 +336,67 @@ create() {
             is_config_name=$2-${port}.json
         fi
         is_json_file=$is_conf_dir/$is_config_name
-        # get json
-        [[ $is_change || ! $json_str ]] && get protocol $2
-        [[ $net == "reality" ]] && is_add_public_key=",outbounds:[{type:\"direct\"},{tag:\"public_key_$is_public_key\",type:\"direct\"}]"
-        is_new_json=$(jq "{inbounds:[{tag:\"$is_config_name\",type:\"$is_protocol\",$is_listen,listen_port:$port,$json_str}]$is_add_public_key}" <<<{})
+        # get json for the NEW protocol type
+        get protocol $2 # $2 is the new_protocol (e.g. "Http") this sets global $is_protocol, $net, $json_str
+        
+        local original_protocol_type_for_jq=$is_protocol
+        local original_json_str_for_jq=$json_str
+        local original_net_for_jq=$net # for reality check
+
         [[ $is_test_json ]] && return # tmp test
-        # only show json, dont save to file.
+        
+        # del old file. This call to del() might pollute global vars like is_protocol, net, json_str
+        # because del() calls get info() internally.
+        [[ $is_config_file ]] && is_no_del_msg=1 && del $is_config_file 
+
+        # Attempt to RESET specific known problematic globals before restoring for NEW config
+        if [[ "$2" == "Http" || "$2" == "Socks" || "$2" == "Shadowsocks" || "$2" == "Direct" ]]; then # Only reset if new type is simple and known not to need these from a previous complex type
+            uuid=""
+            host="" 
+            path=""
+            is_servername=""
+            is_private_key=""
+            is_public_key=""
+            flow=""
+            # For these simple types, other complex fields like reality settings are not applicable.
+            # We rely on `get protocol $2` to correctly set its own specific fields (like ss_method, ss_password for Shadowsocks)
+            # and for Http/Socks, it uses http_user/pass, is_socks_user/pass which should have been set by `add`.
+        fi
+
+        # Restore the globals to what they should be for the NEW config being created
+        # $2 still holds the correct new_protocol (e.g. "Http")
+        get protocol $2 
+        # Now global $is_protocol, $net, $json_str are correctly set for the new config again.
+
+        [[ $net == "reality" ]] && is_add_public_key=",outbounds:[{type:\"direct\"},{tag:\"public_key_$is_public_key\",type:\"direct\"}]" || is_add_public_key=
+        
+        # Use the now-restored global $is_protocol, $json_str. $port is the new port.
+        # $is_listen was set at the beginning of this function based on global $host.
+        # If $host was polluted by del(), $is_listen might be wrong for the new config.
+        # We need to ensure $is_listen and $is_config_name are correct for the *new* protocol ($2)
+        
+        local current_listen_val
+        local current_config_name_val
+        # Determine listen and config_name based on $2 (the new_protocol) and current $host & $port
+        # This re-evaluates based on $host which might have been changed by del->get info
+        # For non-TLS types like plain Http, host should be considered empty for this purpose.
+        if [[ $(echo "$2" | grep -i -E "tls$|reality$") && $host ]]; then # If new proto is TLS/Reality AND global $host is set
+            current_listen_val='listen: "127.0.0.1"'
+            current_config_name_val="$2-${host}.json" # Use current (possibly old) host in name
+        else # For non-TLS (like Http) or if host is not set for TLS/Reality
+            current_listen_val='listen: "::"'
+            current_config_name_val="$2-${port}.json" # Name uses only protocol and port
+        fi
+        is_json_file=$is_conf_dir/$current_config_name_val # Update is_json_file path too
+
+        is_new_json=$(jq "{inbounds:[{tag:\"$current_config_name_val\",type:\"$is_protocol\",$current_listen_val,listen_port:$port,$json_str}]$is_add_public_key}" <<<"{}")
+        
         [[ $is_gen ]] && {
             msg
             jq <<<$is_new_json
             msg
             return
         }
-        # del old file
-        [[ $is_config_file ]] && is_no_del_msg=1 && del $is_config_file
-        # save json to file
         cat <<<$is_new_json >$is_json_file
         if [[ $is_new_install ]]; then
             # config.json
@@ -465,6 +511,7 @@ change() {
         info $1
         [[ $is_auto_get_config ]] && msg "\n自动选择: $is_config_file"
     }
+
     is_old_net=$net
     [[ $is_tcp_http ]] && net=http
     [[ $host ]] && net=$is_protocol-$net-tls
@@ -795,7 +842,13 @@ add() {
     is_lower=${1,,}
     if [[ $is_lower ]]; then
         case $is_lower in
-        ws | tcp | quic | http)
+        http) # Explicitly handle plain Http
+            is_new_protocol=Http
+            ;;
+        socks) # Explicitly handle plain Socks
+            is_new_protocol=Socks
+            ;;
+        ws | tcp | quic) # These were previously grouped with http
             is_new_protocol=VMess-${is_lower^^}
             ;;
         wss | h2 | hu | vws | vh2 | vhu | tws | th2 | thu)
@@ -821,12 +874,6 @@ add() {
             ;;
         trojan)
             is_new_protocol=Trojan
-            ;;
-        socks)
-            is_new_protocol=Socks
-            ;;
-        http)
-            is_new_protocol=Http
             ;;
         *)
             for v in ${protocol_list[@]}; do
@@ -1114,6 +1161,8 @@ add() {
     # create json
     create server $is_new_protocol
 
+    get protocol $is_new_protocol 
+
     # show config info.
     info
 }
@@ -1247,8 +1296,7 @@ get() {
             ;;
         http*)
             net=http
-            is_protocol=$net
-            # http_user and http_pass will always have values (either user-provided or auto-generated by `add` function)
+            is_protocol=$net 
             json_str="users:[{username: \"$http_user\", password: \"$http_pass\"}]"
             
             # [[ $http_allow_enable == 1 && $http_allow_list ]] && { # Temporarily disabled
@@ -1385,11 +1433,13 @@ get() {
 # show info
 info() {
     local display_protocol_name 
-    local is_color is_can_change is_info_show is_info_str is_url 
+    local is_color is_info_show is_info_str is_url 
     local is_type is_tcp_http is_quic_add is_insecure is_flow is_net_type 
     local i a tt 
 
-    if [[ ! "$is_protocol" ]]; then get info "$1"; fi
+    if [[ ! "$is_protocol" ]]; then 
+        get info "$1"
+    fi
     
     # Construct display_protocol_name (REFINED LOGIC)
     if [[ "$is_reality" == 1 ]]; then # Handles VLESS-REALITY and VLESS-HTTP2-REALITY
@@ -1416,57 +1466,56 @@ info() {
     [[ -z "$display_protocol_name" && "$is_protocol" ]] && display_protocol_name="${is_protocol^^}"
 
     is_color=44
-    case "$net" in # $net is crucial here, set by \`get protocol\` which is called by \`get info\`
-        ws | tcp | h2 | quic) # These are primarily transports (e.g. for VMess, VLESS, Trojan with TLS, or VMess non-TLS TCP/QUIC)
-            if [[ "$host" ]]; then # TLS variants (VMess/VLESS/Trojan with these transports + TLS)
-                is_color=45; is_can_change=(0 1 2 3 5); is_info_show=(0 1 2 3 4 6 7 8)
-                local url_user_field="$uuid" # Default to UUID (for VMess, VLESS)
+
+    case "$net" in 
+        ws | tcp | h2 | quic) 
+            if [[ "$host" ]]; then 
+                is_color=45; is_can_change=(0 1 2 3 5); is_info_show=(0 1 2 3 4 6 7 8) 
+                local url_user_field="$uuid" 
                 if [[ "${is_protocol,,}" == 'vmess' ]]; then
                     is_vmess_url=$(jq -c "{v:2,ps:\"${display_protocol_name}-${host}\",add:\"$is_addr\",port:\"$is_https_port\",id:\"$uuid\",aid:\"0\",net:\"$net\",host:\"$host\",path:\"$path\",tls:\"tls\"}" <<<"{}")
                     is_url="vmess://$(echo -n "$is_vmess_url" | base64 -w 0)"
                 elif [[ "${is_protocol,,}" == "vless" ]]; then
                      is_url="${is_protocol}://$url_user_field@$host:$is_https_port?encryption=none&security=tls&type=$net&host=$host&path=$path#${display_protocol_name}-${host}"
                 elif [[ "${is_protocol,,}" == "trojan" ]]; then
-                    url_user_field="$password" # Trojan uses password
-                    is_can_change=(0 1 2 3 4); is_info_show=(0 1 2 10 4 6 7 8) # Adjust for Trojan password
+                    url_user_field="$password" 
+                    is_can_change=(0 1 2 3 4); is_info_show=(0 1 2 10 4 6 7 8) 
                     is_url="${is_protocol}://$url_user_field@$host:$is_https_port?encryption=none&security=tls&type=$net&host=$host&path=$path#${display_protocol_name}-${host}"
                 fi
                 is_info_str=("$is_protocol" "$is_addr" "$is_https_port" "$url_user_field" "$net" "$host" "$path" 'tls')
                 [[ "$is_caddy" ]] && is_can_change+=(11)
 
-            elif [[ "${is_protocol,,}" == "vmess" && ! "$host" ]]; then # Non-TLS VMess with (tcp or quic) transport. VMess-HTTP is handled in 'http' case.
+            elif [[ "${is_protocol,,}" == "vmess" && ! "$host" ]]; then 
                 is_type=none; is_can_change=(0 1 5); is_info_show=(0 1 2 3 4); is_info_str=("$is_protocol" "$is_addr" "$port" "$uuid" "$net")
-                if [[ "$net" == "quic" ]]; then # VMess-QUIC (non-TLS)
+                if [[ "$net" == "quic" ]]; then 
                     is_insecure=1; is_info_show+=(8 9 20); is_info_str+=('tls' 'h3' 'true'); is_quic_add=",tls:\"tls\",alpn:\"h3\""
                 is_vmess_url=$(jq -c "{v:2,ps:\"${display_protocol_name}-${is_addr}\",add:\"$is_addr\",port:\"$port\",id:\"$uuid\",aid:\"0\",net:\"$net\",type:\"$is_type\"$is_quic_add}" <<<"{}")
                 is_url="vmess://$(echo -n "$is_vmess_url" | base64 -w 0)"
-                elif [[ "$net" == "tcp" ]]; then # VMess-TCP (non-TLS)
+                elif [[ "$net" == "tcp" ]]; then 
                      is_vmess_url=$(jq -c "{v:2,ps:\"${display_protocol_name}-${is_addr}\",add:\"$is_addr\",port:\"$port\",id:\"$uuid\",aid:\"0\",net:\"$net\",type:\"$is_type\"}" <<<"{}")
                      is_url="vmess://$(echo -n "$is_vmess_url" | base64 -w 0)"
                 fi
             fi
             ;;
-        http) # This case handles BOTH plain HTTP proxy AND VMess-HTTP (non-TLS) transport
-            if [[ "${is_protocol,,}" == "vmess" && ! "$host" ]]; then # VMess-HTTP (non-TLS transport)
-                # display_protocol_name for VMESS-HTTP is "VMESS-HTTP" from earlier logic
+        http) 
+            if [[ "${is_protocol,,}" == "vmess" && ! "$host" ]]; then 
                 is_type=http; is_tcp_http=1; is_can_change=(0 1 5);
-                is_info_show=(0 1 2 3 4 5) # Protocol(VMess), Addr, Port, UUID, Network(http), Type(http)
+                is_info_show=(0 1 2 3 4 5) 
                 is_info_str=("$is_protocol" "$is_addr" "$port" "$uuid" "http" "http")
                 is_vmess_url=$(jq -c "{v:2,ps:\"${display_protocol_name}-${is_addr}\",add:\"$is_addr\",port:\"$port\",id:\"$uuid\",aid:\"0\",net:\"http\",type:\"http\"}" <<<"{}")
                 is_url="vmess://$(echo -n "$is_vmess_url" | base64 -w 0)"
-            elif [[ "${is_protocol,,}" == "http" ]]; then # Plain HTTP Proxy
-                # display_protocol_name for plain HTTP is "HTTP" from earlier logic
+            elif [[ "${is_protocol,,}" == "http" ]]; then 
                 is_can_change=(0 1 13 14 17 18)
-                is_info_show=(0 1 2) # Protocol, Addr, Port
+                is_info_show=(0 1 2) 
                 is_info_str=("$is_protocol" "$is_addr" "$port")
                 local http_url_user_pass_segment=""
                 if [[ "$http_user" ]]; then
                     http_url_user_pass_segment="$http_user"
-                    is_info_show+=(19) # Username from info_list
+                    is_info_show+=(19) 
                     is_info_str+=("$http_user")
                     if [[ "$http_pass" ]]; then
                         http_url_user_pass_segment+=":$http_pass"
-                        is_info_show+=(10) # Password from info_list
+                        is_info_show+=(10) 
                         is_info_str+=("$http_pass")
                     fi
                     http_url_user_pass_segment+="@"
@@ -1479,14 +1528,28 @@ info() {
         trojan) is_insecure=1; is_can_change=(0 1 4); is_info_show=(0 1 2 10 4 8 20); is_url="trojan://$password@$is_addr:$port?type=tcp&security=tls&allowInsecure=1#${display_protocol_name}-${is_addr}"; is_info_str=("$is_protocol" "$is_addr" "$port" "$password" 'tcp' 'tls' 'true') ;;    
         hy*) is_can_change=(0 1 4); is_info_show=(0 1 2 10 8 9 20); is_url="hysteria2://$password@$is_addr:$port?alpn=h3&insecure=1#${display_protocol_name}-${is_addr}"; is_info_str=("$is_protocol" "$is_addr" "$port" "$password" 'tls' 'h3' 'true') ;;    
         tuic) is_insecure=1; is_can_change=(0 1 4 5); is_info_show=(0 1 2 3 10 8 9 20 21); is_url="tuic://$uuid:$password@$is_addr:$port?alpn=h3&allow_insecure=1&congestion_control=bbr#${display_protocol_name}-${is_addr}"; is_info_str=("$is_protocol" "$is_addr" "$port" "$uuid" "$password" 'tls' 'h3' 'true' 'bbr') ;;    
-        reality) is_color=41; is_can_change=(0 1 5 9 10); is_info_show=(0 1 2 3 15 4 8 16 17 18); is_flow=xtls-rprx-vision; local current_net_type_for_reality="tcp"; if [[ "$display_protocol_name" == "VLESS-HTTP2-REALITY" ]]; then is_flow=; current_net_type_for_reality=h2; is_info_show=(${is_info_show[@]/15/}); fi; is_info_str=("$is_protocol" "$is_addr" "$port" "$uuid" "$is_flow" "$current_net_type_for_reality" 'reality' "$is_servername" 'chrome' "$is_public_key"); is_url="vless://$uuid@$is_addr:$port?encryption=none&security=reality&flow=$is_flow&type=$current_net_type_for_reality&sni=$is_servername&pbk=$is_public_key&fp=chrome#${display_protocol_name}-${is_addr}" ;;    
+        reality) 
+            is_color=41; 
+            is_can_change=(0 1 5 9 10);
+            is_info_show=(0 1 2 3 15 4 8 16 17 18); 
+            is_flow=xtls-rprx-vision; 
+            local current_net_type_for_reality="tcp"; 
+            if [[ "$display_protocol_name" == "VLESS-HTTP2-REALITY" ]]; then 
+                is_flow=; current_net_type_for_reality=h2; is_info_show=(${is_info_show[@]/15/}); 
+            fi; 
+            is_info_str=("$is_protocol" "$is_addr" "$port" "$uuid" "$is_flow" "$current_net_type_for_reality" 'reality' "$is_servername" 'chrome' "$is_public_key"); 
+            is_url="vless://$uuid@$is_addr:$port?encryption=none&security=reality&flow=$is_flow&type=$current_net_type_for_reality&sni=$is_servername&pbk=$is_public_key&fp=chrome#${display_protocol_name}-${is_addr}" 
+            ;;
         direct) is_can_change=(0 1 7 8); is_info_show=(0 1 2 13 14); is_info_str=("$is_protocol" "$is_addr" "$port" "$door_addr" "$door_port"); is_url="" ;;    
         socks) is_can_change=(0 1 12 4 15 16); is_info_show=(0 1 2 19 10); is_info_str=("$is_protocol" "$is_addr" "$port" "$is_socks_user" "$is_socks_pass"); is_url="socks://$(echo -n "${is_socks_user}:${is_socks_pass}" | base64 -w 0)@${is_addr}:${port}#${display_protocol_name}-${is_addr}"; [[ "$socks_allow_enable" == 1 && -n "$socks_allow_list" ]] && msg "Socks白名单已启用: $socks_allow_list" ;;
         mtproto) 
         # 已移除MTProto相关内容
         ;;
     esac
-    [[ $is_dont_show_info || $is_gen || $is_dont_auto_exit ]] && return # dont show info
+    if [[ $is_dont_show_info || $is_gen || $is_dont_auto_exit ]]; then
+        return
+    fi
+
     msg "-------------- $is_config_name -------------"
     for ((i = 0; i < ${#is_info_show[@]}; i++)); do
         a=${info_list[${is_info_show[$i]}]}
