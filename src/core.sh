@@ -1214,11 +1214,17 @@ get() {
                 [[ ${!v} == 'null' ]] && unset $v
             done
 
+            if [[ "${is_protocol,,}" == "http" ]]; then
+                http_user=$username 
+                http_pass=$password 
+            fi
+
             if [[ $is_private_key ]]; then
                 is_reality=1
                 net_type+=reality
                 is_public_key=${is_public_key/public_key_/}
             fi
+
             is_socks_user=$username
             is_socks_pass=$password
 
