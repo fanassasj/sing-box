@@ -125,43 +125,63 @@ Usage: sing-box [options]... [args]...
 
 ## 添加 http 代理
 
-1. 添加 http 代理（用户名和密码默认自动随机生成）：
-   ```bash
-   sing-box add http 端口号
-   # 例如：sing-box add http 3128
-   ```
-   你也可以手动指定用户名和密码：
-   ```bash
-   sing-box add http 3128 myuser mypass
-   ```
+1.  **快速添加 HTTP 代理**：
+    默认情况下，用户名和密码会自动随机生成。您可以只指定端口号：
+    ```bash
+    sing-box add http <端口号>
+    # 例如：sing-box add http 3128
+    ```
+    在交互式创建过程中，脚本会询问您是否启用 IP 白名单，并提示输入 IP 列表（如果启用）。
 
-2. 查看 http 代理配置信息（包括用户名、密码、白名单等）：
-   ```bash
-   sing-box info 配置名
-   # 或 sing-box info 选择 http 代理配置
-   ```
+2.  **添加 HTTP 代理并自定义认证和白名单（命令行参数方式）**：
+    您也可以在添加时直接指定用户名、密码、是否启用白名单以及白名单 IP 列表：
+    ```bash
+    sing-box add http <端口号> [用户名] [密码] [是否启用白名单(1为是,0为否)] [IP列表(逗号分隔)]
+    # 示例1: 指定用户名和密码，不启用白名单
+    # sing-box add http 3129 myuser mypass 0
+    # 示例2: 自动生成用户名密码，但启用白名单并指定IP
+    # sing-box add http 3130 auto auto 1 "1.1.1.1,2.2.2.0/24"
+    # 示例3: 指定所有参数
+    # sing-box add http 3131 customuser custpass 1 "192.168.1.100,10.0.0.0/8"
+    ```
+    *   如果用户名或密码想使用自动生成的，请在该参数位置使用 `auto`。
+    *   IP 列表请用英文逗号分隔，如果包含特殊字符或空格，建议用引号括起来。
 
-3. 设置/启用 http 代理白名单：
-   - 启用/禁用白名单：
-     ```bash
-     sing-box change 配置名 启用/禁用 http 白名单
-     ```
-   - 设置白名单内容（逗号分隔 IP）：
-     ```bash
-     sing-box change 配置名 设置 http 白名单
-     # 按提示输入 1.2.3.4,5.6.7.8
-     ```
+## 查看与管理 HTTP 代理
 
-4. 代理信息展示：
-   - info 命令会显示 http 代理的用户名、密码、端口、白名单状态等。
-   - 你可以直接复制 http 代理的 url 用于客户端配置。
+1.  **查看 HTTP 代理配置信息**：
+    此命令会显示代理的端口、用户名、密码、当前白名单状态及IP列表（如果已启用）等。
+    ```bash
+    sing-box info <配置名>
+    # 例如，如果通过 'sing-box add http 3128' 创建，配置名通常是 Http-3128.json
+    # sing-box info Http-3128.json
+    # 您也可以不带配置名运行 sing-box info，然后在列表中选择。
+    ```
 
-5. 其它管理命令同 socks5 代理。
+2.  **修改 HTTP 代理白名单（创建后）**：
+    如果您在创建时未设置白名单，或需要修改现有白名单：
+    *   启用/禁用白名单：
+        ```bash
+        sing-box change <配置名> "启用/禁用 http 白名单"
+        # 脚本会提示您选择启用 (1) 或禁用 (0)。
+        ```
+    *   设置/更新白名单 IP 列表：
+        ```bash
+        sing-box change <配置名> "设置 http 白名单"
+        # 脚本会提示您输入新的 IP 列表 (逗号分隔，例如: 1.2.3.4,5.6.7.8)。
+        # 如果之前已启用白名单，这会覆盖旧的IP列表。如果之前未启用，通常需要先执行上面的启用操作。
+        ```
 
+    **重要提示**：当通过脚本成功添加、修改或删除白名单规则后，`sing-box` 服务将会自动重启以确保规则立即生效。
 
+3.  **代理 URL**：
+    `sing-box info` 命令会直接显示可用于客户端配置的 HTTP 代理 URL。
 
+4.  **其他管理命令**：
+    如更改端口、用户名、密码等，请参考 `sing-box help` 中 `change` 命令的相关参数，操作逻辑与 SOCKS5 代理类似。
+    删除代理请使用 `sing-box del <配置名>`。
 
 谨慎使用 del, ddel, 此选项会直接删除配置; 无需确认
+
 反馈问题) https://github.com/233boy/sing-box/issues
 文档(doc) https://233boy.com/sing-box/sing-box-script/
-```

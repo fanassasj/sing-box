@@ -2039,6 +2039,11 @@ _manage_whitelist_rules() {
     if echo "$updated_json" | jq . > "$is_config_json"; then # Use jq . to pretty print and validate before writing
         _green "路由规则已为 $inbound_tag 在 $is_config_json 中更新。"
         rm "${is_config_json}.bak_whitelist_update" # Remove backup on success
+        # Check if rules were actually changed and then restart
+        if [[ "$action" == "add_update" && "$is_enabled" == "1" && -n "$ip_list_str" && "$json_ip_array" != "[]" ]] || [[ "$action" == "remove" ]]; then
+            _green "检测到路由规则变更，正在重启 sing-box 服务..."
+            manage restart &
+        fi
     else
         _yellow "写回 $is_config_json 失败。恢复备份。"
         mv "${is_config_json}.bak_whitelist_update" "$is_config_json"
