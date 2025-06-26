@@ -438,8 +438,9 @@ create() {
         else
             [[ ! $is_ntp_on ]] && is_ntp=
         fi
-        is_outbounds='outbounds:[{tag:"direct",type:"direct"}]'
-        is_server_config_json=$(jq "{$is_log,$is_dns,$is_ntp$is_outbounds}" <<<{})
+        is_outbounds='outbounds:[{tag:"direct",type:"direct"},{tag:"block",type:"block"}]'
+        is_route_rules='route:{rules:[]}' # Start with an empty rules array
+        is_server_config_json=$(jq "{$is_log,$is_dns,$is_ntp$is_outbounds,$is_route_rules}" <<<"{}")
         cat <<<$is_server_config_json >$is_config_json
         manage restart &
         ;;
@@ -734,13 +735,22 @@ del() {
     # get a config file
     [[ ! $is_config_file ]] && get info $1
     if [[ $is_config_file ]]; then
+        local config_file_to_delete_basename="$is_config_file" # Store basename before it's unset or changed
+        local protocol_of_deleted_config=$is_protocol # Store protocol before it's potentially changed by get info in sub-calls
+
         if [[ $is_main_start && ! $is_no_del_msg ]]; then
-            msg "\n是否删除配置文件?: $is_config_file"
+            msg "\n是否删除配置文件?: $config_file_to_delete_basename"
             pause
         fi
-        rm -rf $is_conf_dir/"$is_config_file"
-        [[ ! $is_new_json ]] && manage restart &
-        [[ ! $is_no_del_msg ]] && _green "\n已删除: $is_config_file\n"
+        rm -rf "$is_conf_dir/$config_file_to_delete_basename"
+        
+        # Remove associated whitelist rules from main config.json if it was http or socks
+        if [[ "${protocol_of_deleted_config,,}" == "http" || "${protocol_of_deleted_config,,}" == "socks" ]]; then
+             _manage_whitelist_rules "remove" "$config_file_to_delete_basename" "" "0"
+        fi
+
+        [[ ! $is_new_json ]] && manage restart & # This restart might be for the main config if rules changed
+        [[ ! $is_no_del_msg ]] && _green "\n已删除: $config_file_to_delete_basename\n"
 
         [[ $is_caddy ]] && {
             is_del_host=$host
@@ -1158,9 +1168,35 @@ add() {
         get install-caddy
     fi
 
-    # create json
+    # create json (this sets global $is_config_name)
     create server $is_new_protocol
 
+    # Manage whitelist rules after分片配置文件is created and $is_config_name is set
+    # This needs to happen regardless of $is_main_start, using the finally determined allow_enable/list vars
+    local current_allow_list=""
+    local current_allow_enable="0"
+    local current_inbound_tag=$is_config_name # $is_config_name is the tag, set in create server
+
+    if [[ "${is_new_protocol,,}" == "http" ]]; then
+        current_allow_list=$http_allow_list
+        current_allow_enable=$http_allow_enable
+    elif [[ "${is_new_protocol,,}" == "socks" ]]; then
+        current_allow_list=$socks_allow_list
+        current_allow_enable=$socks_allow_enable
+    fi
+
+    if [[ "${is_new_protocol,,}" == "http" || "${is_new_protocol,,}" == "socks" ]]; then
+        # _manage_whitelist_rules will handle the logic of adding/removing based on is_enabled and ip_list content
+        _manage_whitelist_rules "add_update" "$current_inbound_tag" "$current_allow_list" "$current_allow_enable"
+        # If rules were changed, a restart is implicitly handled by `create server` or should be added if not.
+        # `create server` calls `manage restart &` at its end. If _manage_whitelist_rules modified a different config ($is_config_json),
+        # that restart might be sufficient if sing-box re-reads all configs including the main one with routes.
+        # To be safe, if _manage_whitelist_rules succeeded and made changes, we might consider another restart, 
+        # or ensure the restart in `create server` is effective for route changes.
+        # For now, we rely on the restart within `create server`.
+    fi
+
+    # Aggressively ensure global context is correct for the $is_new_protocol before calling info
     get protocol $is_new_protocol 
 
     # show config info.
@@ -1918,4 +1954,95 @@ rand_user() {
 
 rand_mtp_secret() {
     openssl rand -hex 16
+}
+
+_manage_whitelist_rules() {
+    local action="$1"        # "add_update" or "remove"
+    local inbound_tag="$2"   # e.g., "Http-12345"
+    local ip_list_str="$3"   # Comma-separated IPs, e.g., "1.1.1.1,2.2.2.0/24"
+    local is_enabled="$4"    # 1 for enabled, 0 for disabled
+
+    if ! type -P jq &>/dev/null; then
+        _yellow "警告: jq 未安装，无法管理IP白名单路由规则。"
+        _yellow "请先安装 jq (例如: apt install jq -y 或者 yum install jq -y)"
+        return 1
+    fi
+
+    [[ ! -f $is_config_json ]] && {
+        _yellow "主配置文件 $is_config_json 不存在。正在尝试创建默认配置..."
+        create config.json # Try to create it if it doesn't exist
+        [[ ! -f $is_config_json ]] && _yellow "创建主配置文件失败，无法更新路由规则。" && return 1
+    }
+    
+    # Create a backup
+    cp "$is_config_json" "${is_config_json}.bak_whitelist_update" || {
+        _yellow "创建配置文件备份失败，取消白名单更新。"
+        return 1
+    }
+
+    # 1. Remove all existing rules for this specific inbound_tag to prevent duplicates or conflicts
+    # jq uses `|=` for in-place update of the selected part of the JSON
+    # `map(select(...))` iterates through an array and keeps only elements for which select(...) is true.
+    # Here, we keep rules that DO NOT have the current inbound_tag in their .inbound array.
+    local updated_json
+    updated_json=$(jq --arg tag "$inbound_tag" \
+        'if (.route.rules | type == "array") then 
+            .route.rules |= map(select(.inbound as $ibs | if ($ibs | type == "array") then ($ibs | index($tag) | not) else true end)) 
+         else 
+            . 
+         end' "${is_config_json}.bak_whitelist_update")
+
+    if [[ -z "$updated_json" ]]; then
+        _yellow "处理 $is_config_json 中的路由规则失败 (移除旧规则步骤)。恢复备份。"
+        mv "${is_config_json}.bak_whitelist_update" "$is_config_json"
+        return 1
+    fi
+
+    # 2. If action is "add_update" and it's enabled with a non-empty IP list, add new rules
+    if [[ "$action" == "add_update" && "$is_enabled" == "1" && -n "$ip_list_str" ]]; then
+        local json_ip_array="[]"
+        if [[ -n "$ip_list_str" ]]; then
+            # More robust conversion to JSON array of strings using jq itself
+            json_ip_array=$(echo "$ip_list_str" | jq -R 'split(",") | map(select(length > 0)) | map( (. | gsub("^ +| +$"; ""))) ' ) 
+            if ! echo "$json_ip_array" | jq empty 2>/dev/null || [[ "$json_ip_array" == "[]" && "$ip_list_str" != "" && "$ip_list_str" != "[]" ]]; then
+                _yellow "IP列表 '$ip_list_str' 转换JSON数组失败或结果为空数组，请检查格式（逗号分隔，无多余引号）。"
+                #json_ip_array="[]" # No, if conversion fails, we should not add an empty rule if IPs were intended
+                mv "${is_config_json}.bak_whitelist_update" "$is_config_json" # Restore backup
+                return 1
+            fi
+        fi
+
+        if [[ "$json_ip_array" != "[]" ]]; then # Only add rules if there are valid IPs
+            local allow_rule_json
+            allow_rule_json=$(jq -n --arg tag "$inbound_tag" --argjson ips "$json_ip_array" \
+                '{inbound: [$tag], source_ip_cidr: $ips, outbound: "direct"}')
+
+            local block_rule_json
+            block_rule_json=$(jq -n --arg tag "$inbound_tag" \
+                '{inbound: [$tag], outbound: "block"}')
+
+            # Add new rules to the beginning of the .route.rules array
+            updated_json=$(echo "$updated_json" | jq --argjson allow_rule "$allow_rule_json" --argjson block_rule "$block_rule_json" \
+                '.route.rules = [$allow_rule, $block_rule] + .route.rules')
+            
+            if [[ -z "$updated_json" ]]; then
+                _yellow "向 $is_config_json 添加新的路由规则失败。恢复备份。"
+                mv "${is_config_json}.bak_whitelist_update" "$is_config_json"
+                return 1
+            fi
+        else
+            _yellow "IP列表为空或无效，未添加针对 $inbound_tag 的允许规则。仅移除了旧规则（如果有）。"
+        fi
+    fi
+
+    # 3. Write the potentially modified JSON back to the original file
+    if echo "$updated_json" | jq . > "$is_config_json"; then # Use jq . to pretty print and validate before writing
+        _green "路由规则已为 $inbound_tag 在 $is_config_json 中更新。"
+        rm "${is_config_json}.bak_whitelist_update" # Remove backup on success
+    else
+        _yellow "写回 $is_config_json 失败。恢复备份。"
+        mv "${is_config_json}.bak_whitelist_update" "$is_config_json"
+        return 1
+    fi
+    return 0
 }
